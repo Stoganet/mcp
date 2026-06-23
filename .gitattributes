@@ -1,0 +1,11 @@
+# Normalize line endings to LF
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+
+# Generated files: keep out of GitHub language stats and diffs
+*.sum linguist-generated=true

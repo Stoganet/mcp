@@ -1,0 +1,21 @@
+# build
+/mcp-server
+/dist/
+
+# env / secrets
+.env
+.env.local
+
+# editor
+.idea/
+.vscode/
+.DS_Store
+
+# coverage
+coverage.out
+
+# ai
+.claude/settings.local.json
+.claude/skills/
+docs/superpowers/
+docs/internal/

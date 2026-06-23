@@ -1,0 +1,35 @@
+name: Bug
+description: Something is broken or behaving incorrectly.
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences. What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Where does this happen? Which tool, service, deploy?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in/out of scope for the fix?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: How do we know it's fixed? Bullet list.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Logs, tool responses, anything else.

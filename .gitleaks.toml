@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Dummy credentials in Go unit tests"
+paths = [
+  '''_test\.go$''',
+]
