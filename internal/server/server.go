@@ -1,16 +1,15 @@
 package server
 
 import (
-	"log/slog"
+	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/Stoganet/mcp/internal/config"
 	"github.com/Stoganet/mcp/internal/tools"
 	mcpgo "github.com/mark3labs/mcp-go/server"
 )
 
-func NewHTTPHandler(cfg *config.Config) http.Handler {
+func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 	s := mcpgo.NewMCPServer(cfg.ServerName, cfg.Version,
 		mcpgo.WithToolCapabilities(true),
 	)
@@ -20,13 +19,15 @@ func NewHTTPHandler(cfg *config.Config) http.Handler {
 
 	dc, err := tools.NewDockerClient(cfg.DockerHost)
 	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("docker client init failed", "err", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	s.AddTool(tools.ListContainers(dc, cfg.ComposeProject))
-	s.AddTool(tools.GetLogs(dc, cfg.ComposeProject))
-	s.AddTool(tools.RestartContainer(dc, cfg.ComposeProject))
-	s.AddTool(tools.PullImage(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerPS(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerLogs(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerInspect(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerRestart(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerPull(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerExec(dc, cfg.ComposeProject))
+	s.AddTool(tools.DockerTop(dc, cfg.ComposeProject))
 
-	return mcpgo.NewStreamableHTTPServer(s)
+	return mcpgo.NewStreamableHTTPServer(s), nil
 }

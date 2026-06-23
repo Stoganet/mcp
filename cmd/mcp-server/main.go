@@ -18,9 +18,14 @@ func main() {
 
 	cfg := config.LoadFromEnv()
 
+	handler, err := server.NewHTTPHandler(cfg)
+	if err != nil {
+		logger.Error("init failed", "err", err)
+		os.Exit(1)
+	}
 	httpSrv := &stdhttp.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.NewHTTPHandler(cfg),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
