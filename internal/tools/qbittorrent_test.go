@@ -112,7 +112,7 @@ func TestQBitTorrents_List(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.Total != 2 {
-		t.Errorf("want total=2, got %d", out.Total)
+		t.Fatalf("want total=2, got %d", out.Total)
 	}
 	if out.Torrents[0].State != "downloading" {
 		t.Errorf("want state=downloading, got %q", out.Torrents[0].State)
@@ -166,6 +166,83 @@ func TestQBitTorrents_SDKError(t *testing.T) {
 	}
 }
 
+func TestQBitTorrentDetail_MissingHash(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitTorrentDetail(mock)
+	r := callTool(t, handler, map[string]any{"hash": ""})
+	resultError(t, r)
+}
+
+func TestQBitTorrentDetail_PseudoTrackersFiltered(t *testing.T) {
+	files := qbit.TorrentFiles{{Name: "file.mkv", Size: 1024 * 1024 * 1024, Progress: 1.0, Priority: 1}}
+	mock := &mockQBitClient{
+		getTorrentPropertiesFn: func(_ context.Context, _ string) (qbit.TorrentProperties, error) {
+			return qbit.TorrentProperties{Name: "Movie", TotalSize: 1024 * 1024 * 1024}, nil
+		},
+		getTorrentTrackersFn: func(_ context.Context, _ string) ([]qbit.TorrentTracker, error) {
+			return []qbit.TorrentTracker{
+				{Url: "** [DHT]", Status: 0},
+				{Url: "** [PeX]", Status: 0},
+				{Url: "** [LSD]", Status: 0},
+				{Url: "https://tracker.example.com/announce", Status: 2, NumSeeds: 10},
+			}, nil
+		},
+		getFilesInformationFn: func(_ context.Context, _ string) (*qbit.TorrentFiles, error) {
+			return &files, nil
+		},
+	}
+
+	_, handler := tools.QBitTorrentDetail(mock)
+	r := callTool(t, handler, map[string]any{"hash": "abc123"})
+	body := resultText(t, r)
+
+	var out struct {
+		Trackers []struct {
+			URL   string `json:"url"`
+			Seeds int    `json:"seeds"`
+		} `json:"trackers"`
+		Files []struct {
+			Name   string  `json:"name"`
+			SizeMB float64 `json:"size_mb"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Trackers) != 1 {
+		t.Fatalf("want 1 tracker (pseudo filtered), got %d", len(out.Trackers))
+	}
+	if out.Trackers[0].URL != "https://tracker.example.com/announce" {
+		t.Errorf("wrong tracker url: %q", out.Trackers[0].URL)
+	}
+	if out.Trackers[0].Seeds != 10 {
+		t.Errorf("want seeds=10, got %d", out.Trackers[0].Seeds)
+	}
+	if len(out.Files) != 1 {
+		t.Fatalf("want 1 file, got %d", len(out.Files))
+	}
+	if out.Files[0].SizeMB != 1024 {
+		t.Errorf("want size_mb=1024, got %v", out.Files[0].SizeMB)
+	}
+}
+
+func TestQBitTorrentDetail_PropertiesError(t *testing.T) {
+	mock := &mockQBitClient{
+		getTorrentPropertiesFn: func(_ context.Context, _ string) (qbit.TorrentProperties, error) {
+			return qbit.TorrentProperties{}, fmt.Errorf("not found")
+		},
+		getTorrentTrackersFn: func(_ context.Context, _ string) ([]qbit.TorrentTracker, error) {
+			return nil, nil
+		},
+		getFilesInformationFn: func(_ context.Context, _ string) (*qbit.TorrentFiles, error) {
+			return nil, nil
+		},
+	}
+	_, handler := tools.QBitTorrentDetail(mock)
+	r := callTool(t, handler, map[string]any{"hash": "abc123"})
+	resultError(t, r)
+}
+
 func TestQBitTorrents_SpeedAndETAMapping(t *testing.T) {
 	mock := &mockQBitClient{
 		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
@@ -197,6 +274,9 @@ func TestQBitTorrents_SpeedAndETAMapping(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Torrents) != 1 {
+		t.Fatalf("want 1 torrent, got %d", len(out.Torrents))
 	}
 	tt := out.Torrents[0]
 	if tt.DlSpeedKBs != 5 {

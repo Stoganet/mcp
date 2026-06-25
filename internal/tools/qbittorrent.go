@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
+	"sync"
 	"time"
 
 	qbit "github.com/autobrr/go-qbittorrent"
@@ -164,6 +166,135 @@ func QBitTorrents(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRe
 			Total:    len(items),
 			Filtered: len(items),
 			Torrents: items,
+		})
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	return tool, handler
+}
+
+type trackerItem struct {
+	URL     string `json:"url"`
+	Status  int    `json:"status"`
+	Seeds   int    `json:"seeds"`
+	Peers   int    `json:"peers"`
+	Message string `json:"message"`
+}
+
+type fileItem struct {
+	Name     string  `json:"name"`
+	SizeMB   float64 `json:"size_mb"`
+	Progress float32 `json:"progress"`
+	Priority int     `json:"priority"`
+}
+
+type torrentDetailResult struct {
+	Hash           string        `json:"hash"`
+	Name           string        `json:"name"`
+	SavePath       string        `json:"save_path"`
+	TotalSizeMB    float64       `json:"total_size_mb"`
+	DownloadedMB   float64       `json:"downloaded_mb"`
+	UploadedMB     float64       `json:"uploaded_mb"`
+	DlSpeedKBs     float64       `json:"dlspeed_kbs"`
+	UpSpeedKBs     float64       `json:"upspeed_kbs"`
+	ETASeconds     int           `json:"eta_seconds"`
+	Seeds          int           `json:"seeds"`
+	Peers          int           `json:"peers"`
+	ShareRatio     float64       `json:"share_ratio"`
+	AdditionDate   int           `json:"addition_date"`
+	CompletionDate int           `json:"completion_date"`
+	IsPrivate      bool          `json:"is_private"`
+	Trackers       []trackerItem `json:"trackers"`
+	Files          []fileItem    `json:"files"`
+}
+
+func isPseudoTracker(url string) bool {
+	return strings.HasPrefix(url, "** [")
+}
+
+func QBitTorrentDetail(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("qbit_torrent_detail",
+		mcp.WithDescription("Detailed info for a single torrent: properties, tracker health, and file list."),
+		mcp.WithString("hash", mcp.Required(), mcp.Description("Torrent info hash")),
+	)
+
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		hash := mcp.ParseArgument(req, "hash", "").(string)
+		if hash == "" {
+			return mcp.NewToolResultError("hash is required"), nil //nolint:nilerr
+		}
+
+		var (
+			props                           qbit.TorrentProperties
+			trackers                        []qbit.TorrentTracker
+			files                           *qbit.TorrentFiles
+			propsErr, trackersErr, filesErr error
+			wg                              sync.WaitGroup
+		)
+		wg.Add(3)
+		go func() { defer wg.Done(); props, propsErr = qc.GetTorrentPropertiesCtx(ctx, hash) }()
+		go func() { defer wg.Done(); trackers, trackersErr = qc.GetTorrentTrackersCtx(ctx, hash) }()
+		go func() { defer wg.Done(); files, filesErr = qc.GetFilesInformationCtx(ctx, hash) }()
+		wg.Wait()
+
+		if propsErr != nil {
+			return mcp.NewToolResultError("properties error: " + propsErr.Error()), nil //nolint:nilerr
+		}
+		if trackersErr != nil {
+			return mcp.NewToolResultError("trackers error: " + trackersErr.Error()), nil //nolint:nilerr
+		}
+		if filesErr != nil {
+			return mcp.NewToolResultError("files error: " + filesErr.Error()), nil //nolint:nilerr
+		}
+
+		trackerItems := make([]trackerItem, 0, len(trackers))
+		for _, tr := range trackers {
+			if isPseudoTracker(tr.Url) {
+				continue
+			}
+			trackerItems = append(trackerItems, trackerItem{
+				URL:     tr.Url,
+				Status:  int(tr.Status),
+				Seeds:   tr.NumSeeds,
+				Peers:   tr.NumPeers,
+				Message: tr.Message,
+			})
+		}
+
+		var fileItems []fileItem
+		if files != nil {
+			fileItems = make([]fileItem, 0, len(*files))
+			for _, f := range *files {
+				fileItems = append(fileItems, fileItem{
+					Name:     f.Name,
+					SizeMB:   bytesToMB(f.Size),
+					Progress: f.Progress,
+					Priority: f.Priority,
+				})
+			}
+		}
+
+		b, err := json.Marshal(torrentDetailResult{
+			Hash:           hash,
+			Name:           props.Name,
+			SavePath:       props.SavePath,
+			TotalSizeMB:    bytesToMB(props.TotalSize),
+			DownloadedMB:   bytesToMB(props.TotalDownloaded),
+			UploadedMB:     bytesToMB(props.TotalUploaded),
+			DlSpeedKBs:     bytesToKBs(int64(props.DlSpeed)),
+			UpSpeedKBs:     bytesToKBs(int64(props.UpSpeed)),
+			ETASeconds:     props.Eta,
+			Seeds:          props.Seeds,
+			Peers:          props.Peers,
+			ShareRatio:     props.ShareRatio,
+			AdditionDate:   props.AdditionDate,
+			CompletionDate: props.CompletionDate,
+			IsPrivate:      props.IsPrivate,
+			Trackers:       trackerItems,
+			Files:          fileItems,
 		})
 		if err != nil {
 			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
