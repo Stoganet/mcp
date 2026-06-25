@@ -43,5 +43,11 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 		s.AddTool(tools.QBitPreferences(qc))
 	}
 
+	sr := tools.NewSystemReader()
+	s.AddTool(tools.SystemDiskUsage(sr))
+	s.AddTool(tools.SystemMountStatus(sr))
+	s.AddTool(tools.SystemNetbirdStatus(sr))
+	s.AddTool(tools.SystemVPNStatus(cfg.GluetunURL))
+
 	return mcpgo.NewStreamableHTTPServer(s), nil
 }
