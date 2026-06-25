@@ -100,10 +100,10 @@ func QBitTorrents(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRe
 	)
 
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		status := mcp.ParseArgument(req, "status", "").(string)
-		category := mcp.ParseArgument(req, "category", "").(string)
-		sort := mcp.ParseArgument(req, "sort", "added_on").(string)
-		limit := int(mcp.ParseArgument(req, "limit", float64(50)).(float64))
+		status := mcp.ParseString(req, "status", "")
+		category := mcp.ParseString(req, "category", "")
+		sort := mcp.ParseString(req, "sort", "added_on")
+		limit := mcp.ParseInt(req, "limit", 50)
 
 		var filter qbit.TorrentFilter
 		switch status {
@@ -222,7 +222,7 @@ func QBitTorrentDetail(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallT
 	)
 
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		hash := mcp.ParseArgument(req, "hash", "").(string)
+		hash := mcp.ParseString(req, "hash", "")
 		if hash == "" {
 			return mcp.NewToolResultError("hash is required"), nil //nolint:nilerr
 		}
@@ -321,7 +321,7 @@ func QBitStop(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReques
 		}
 		result, err := verifyStopState(ctx, qc, hashes)
 		if err != nil {
-			return mcp.NewToolResultError("verify error: " + err.Error()), nil //nolint:nilerr
+			result = map[string][]string{"stopped": hashes, "already_stopped": {}, "not_found": {}, "verify_error": {err.Error()}}
 		}
 		b, err := json.Marshal(result)
 		if err != nil {
@@ -349,7 +349,7 @@ func QBitStart(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReque
 		}
 		result, err := verifyStartState(ctx, qc, hashes)
 		if err != nil {
-			return mcp.NewToolResultError("verify error: " + err.Error()), nil //nolint:nilerr
+			result = map[string][]string{"started": hashes, "already_active": {}, "not_found": {}, "verify_error": {err.Error()}}
 		}
 		b, err := json.Marshal(result)
 		if err != nil {
@@ -450,7 +450,7 @@ func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequ
 		if len(hashes) == 0 {
 			return mcp.NewToolResultError("hashes must not be empty"), nil //nolint:nilerr
 		}
-		deleteFiles := mcp.ParseArgument(req, "delete_files", false).(bool)
+		deleteFiles := mcp.ParseBoolean(req, "delete_files", false)
 
 		found, err := fetchHashStates(ctx, qc, hashes)
 		if err != nil {
@@ -587,7 +587,16 @@ func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		getKeys := parseStringSlice(req, "get")
-		setMap, _ := mcp.ParseArgument(req, "set", nil).(map[string]interface{})
+
+		rawSet := mcp.ParseArgument(req, "set", nil)
+		var setMap map[string]interface{}
+		if rawSet != nil {
+			var ok bool
+			setMap, ok = rawSet.(map[string]interface{})
+			if !ok {
+				return mcp.NewToolResultError("set must be an object"), nil //nolint:nilerr
+			}
+		}
 
 		if len(getKeys) > 0 && len(setMap) > 0 {
 			return mcp.NewToolResultError("get and set are mutually exclusive"), nil //nolint:nilerr

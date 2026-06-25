@@ -613,3 +613,71 @@ func TestQBitPreferences_GetAndSetMutuallyExclusive(t *testing.T) {
 	})
 	resultError(t, r)
 }
+
+func TestQBitTorrents_WrongTypeDoesNotPanic(t *testing.T) {
+	mock := &mockQBitClient{
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return nil, nil
+		},
+	}
+	_, handler := tools.QBitTorrents(mock)
+	r := callTool(t, handler, map[string]any{"limit": "not-a-number"})
+	if r == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
+func TestQBitPreferences_SetWrongType(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{"set": "not-an-object"})
+	resultError(t, r)
+}
+
+func TestQBitStop_VerifyErrorStillReportsSuccess(t *testing.T) {
+	callCount := 0
+	mock := &mockQBitClient{
+		stopFn: func(_ context.Context, _ []string) error { return nil },
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			callCount++
+			return nil, fmt.Errorf("network blip")
+		},
+	}
+	_, handler := tools.QBitStop(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
+	body := resultText(t, r)
+
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out["stopped"]) == 0 {
+		t.Errorf("want stopped to contain hash, got %v", out["stopped"])
+	}
+	if len(out["verify_error"]) == 0 {
+		t.Errorf("want verify_error field when verification fails")
+	}
+}
+
+func TestQBitStart_VerifyErrorStillReportsSuccess(t *testing.T) {
+	mock := &mockQBitClient{
+		startFn: func(_ context.Context, _ []string) error { return nil },
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return nil, fmt.Errorf("network blip")
+		},
+	}
+	_, handler := tools.QBitStart(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
+	body := resultText(t, r)
+
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out["started"]) == 0 {
+		t.Errorf("want started to contain hash, got %v", out["started"])
+	}
+	if len(out["verify_error"]) == 0 {
+		t.Errorf("want verify_error field when verification fails")
+	}
+}
