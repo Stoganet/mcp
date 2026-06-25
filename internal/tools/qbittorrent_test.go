@@ -439,3 +439,81 @@ func TestQBitDelete_DefaultDeleteFilesIsFalse(t *testing.T) {
 		t.Errorf("want delete_files=false by default")
 	}
 }
+
+func TestQBitTransferInfo_SpeedsAndCounts(t *testing.T) {
+	mock := &mockQBitClient{
+		getTransferInfoFn: func(_ context.Context) (*qbit.TransferInfo, error) {
+			return &qbit.TransferInfo{
+				DlInfoSpeed:      10 * 1024,
+				UpInfoSpeed:      2 * 1024,
+				DlInfoData:       500 * 1024 * 1024,
+				UpInfoData:       100 * 1024 * 1024,
+				ConnectionStatus: "connected",
+				DHTNodes:         0,
+			}, nil
+		},
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return []qbit.Torrent{
+				{Hash: "a", State: qbit.TorrentStateDownloading},
+				{Hash: "b", State: qbit.TorrentStateDownloading},
+				{Hash: "c", State: qbit.TorrentStateStoppedDl},
+				{Hash: "d", State: qbit.TorrentStateError},
+			}, nil
+		},
+	}
+
+	_, handler := tools.QBitTransferInfo(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out struct {
+		DlSpeedKBs       float64 `json:"dl_speed_kbs"`
+		UpSpeedKBs       float64 `json:"up_speed_kbs"`
+		DlTotalMB        float64 `json:"dl_total_mb"`
+		ConnectionStatus string  `json:"connection_status"`
+		ActiveDownloads  int     `json:"active_downloads"`
+		Stopped          int     `json:"stopped"`
+		Errored          int     `json:"errored"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.DlSpeedKBs != 10 {
+		t.Errorf("want dl_speed_kbs=10, got %v", out.DlSpeedKBs)
+	}
+	if out.UpSpeedKBs != 2 {
+		t.Errorf("want up_speed_kbs=2, got %v", out.UpSpeedKBs)
+	}
+	if out.DlTotalMB != 500 {
+		t.Errorf("want dl_total_mb=500, got %v", out.DlTotalMB)
+	}
+	if out.ConnectionStatus != "connected" {
+		t.Errorf("want connection_status=connected, got %q", out.ConnectionStatus)
+	}
+	if out.ActiveDownloads != 2 {
+		t.Errorf("want active_downloads=2, got %d", out.ActiveDownloads)
+	}
+	if out.Stopped != 1 {
+		t.Errorf("want stopped=1, got %d", out.Stopped)
+	}
+	if out.Errored != 1 {
+		t.Errorf("want errored=1, got %d", out.Errored)
+	}
+}
+
+func TestQBitTransferInfo_SDKError(t *testing.T) {
+	mock := &mockQBitClient{
+		getTransferInfoFn: func(_ context.Context) (*qbit.TransferInfo, error) {
+			return nil, fmt.Errorf("unreachable")
+		},
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return nil, nil
+		},
+	}
+	_, handler := tools.QBitTransferInfo(mock)
+	r := callTool(t, handler, nil)
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "unreachable") {
+		t.Errorf("want error to contain 'unreachable', got %q", msg)
+	}
+}

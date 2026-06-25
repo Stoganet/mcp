@@ -485,3 +485,77 @@ func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequ
 
 	return tool, handler
 }
+
+type transferInfoResult struct {
+	DlSpeedKBs       float64 `json:"dl_speed_kbs"`
+	UpSpeedKBs       float64 `json:"up_speed_kbs"`
+	DlTotalMB        float64 `json:"dl_total_mb"`
+	UpTotalMB        float64 `json:"up_total_mb"`
+	DlRateLimitKBs   float64 `json:"dl_rate_limit_kbs"`
+	UpRateLimitKBs   float64 `json:"up_rate_limit_kbs"`
+	DHTNodes         int64   `json:"dht_nodes"`
+	ConnectionStatus string  `json:"connection_status"`
+	ActiveDownloads  int     `json:"active_downloads"`
+	ActiveUploads    int     `json:"active_uploads"`
+	Stopped          int     `json:"stopped"`
+	Stalled          int     `json:"stalled"`
+	Errored          int     `json:"errored"`
+}
+
+func QBitTransferInfo(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("qbit_transfer_info",
+		mcp.WithDescription("Global transfer stats and VPN connectivity indicator. "+
+			"connection_status 'firewalled' or 'disconnected' means VPN is down. "+
+			"dht_nodes=0 is normal (DHT disabled by policy)."),
+	)
+
+	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var (
+			info                 *qbit.TransferInfo
+			torrents             []qbit.Torrent
+			infoErr, torrentsErr error
+			wg                   sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() { defer wg.Done(); info, infoErr = qc.GetTransferInfoCtx(ctx) }()
+		go func() {
+			defer wg.Done()
+			torrents, torrentsErr = qc.GetTorrentsCtx(ctx, qbit.TorrentFilterOptions{Filter: qbit.TorrentFilterAll})
+		}()
+		wg.Wait()
+
+		if infoErr != nil {
+			return mcp.NewToolResultError("transfer info error: " + infoErr.Error()), nil //nolint:nilerr
+		}
+		if torrentsErr != nil {
+			return mcp.NewToolResultError("torrents error: " + torrentsErr.Error()), nil //nolint:nilerr
+		}
+
+		counts := map[string]int{}
+		for _, t := range torrents {
+			counts[mapTorrentState(t.State)]++
+		}
+
+		b, err := json.Marshal(transferInfoResult{
+			DlSpeedKBs:       bytesToKBs(info.DlInfoSpeed),
+			UpSpeedKBs:       bytesToKBs(info.UpInfoSpeed),
+			DlTotalMB:        bytesToMB(info.DlInfoData),
+			UpTotalMB:        bytesToMB(info.UpInfoData),
+			DlRateLimitKBs:   bytesToKBs(info.DlRateLimit),
+			UpRateLimitKBs:   bytesToKBs(info.UpRateLimit),
+			DHTNodes:         info.DHTNodes,
+			ConnectionStatus: string(info.ConnectionStatus),
+			ActiveDownloads:  counts["downloading"],
+			ActiveUploads:    counts["seeding"],
+			Stopped:          counts["stopped"],
+			Stalled:          counts["stalled"],
+			Errored:          counts["errored"],
+		})
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	return tool, handler
+}
