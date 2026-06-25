@@ -379,3 +379,63 @@ func TestQBitStart_Categorization(t *testing.T) {
 		t.Errorf("want not_found=[ccc], got %v", out["not_found"])
 	}
 }
+
+func TestQBitDelete_EmptyHashes(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitDelete(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{}})
+	resultError(t, r)
+}
+
+func TestQBitDelete_DeletesFoundSkipsNotFound(t *testing.T) {
+	var gotHashes []string
+	var gotDeleteFiles bool
+	mock := &mockQBitClient{
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return []qbit.Torrent{{Hash: "aaa", State: qbit.TorrentStateStoppedDl}}, nil
+		},
+		deleteTorrentsFn: func(_ context.Context, hashes []string, deleteFiles bool) error {
+			gotHashes = hashes
+			gotDeleteFiles = deleteFiles
+			return nil
+		},
+	}
+	_, handler := tools.QBitDelete(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb"}, "delete_files": true})
+	body := resultText(t, r)
+
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out["deleted"]) != 1 || out["deleted"][0] != "aaa" {
+		t.Errorf("want deleted=[aaa], got %v", out["deleted"])
+	}
+	if len(out["not_found"]) != 1 || out["not_found"][0] != "bbb" {
+		t.Errorf("want not_found=[bbb], got %v", out["not_found"])
+	}
+	if len(gotHashes) != 1 || gotHashes[0] != "aaa" {
+		t.Errorf("SDK called with wrong hashes: %v", gotHashes)
+	}
+	if !gotDeleteFiles {
+		t.Errorf("want delete_files=true passed to SDK")
+	}
+}
+
+func TestQBitDelete_DefaultDeleteFilesIsFalse(t *testing.T) {
+	var gotDeleteFiles bool
+	mock := &mockQBitClient{
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return []qbit.Torrent{{Hash: "aaa", State: qbit.TorrentStateStoppedDl}}, nil
+		},
+		deleteTorrentsFn: func(_ context.Context, _ []string, deleteFiles bool) error {
+			gotDeleteFiles = deleteFiles
+			return nil
+		},
+	}
+	_, handler := tools.QBitDelete(mock)
+	callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
+	if gotDeleteFiles {
+		t.Errorf("want delete_files=false by default")
+	}
+}

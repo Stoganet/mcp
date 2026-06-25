@@ -437,3 +437,51 @@ func verifyStartState(ctx context.Context, qc QBitClient, hashes []string) (map[
 		"not_found":      notFound,
 	}, nil
 }
+
+func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("qbit_delete",
+		mcp.WithDescription("Delete one or more torrents. Set delete_files=true to also remove downloaded data from disk."),
+		mcp.WithArray("hashes", mcp.Required(), mcp.Description("Torrent info hashes")),
+		mcp.WithBoolean("delete_files", mcp.Description("Also delete downloaded data from disk (default false)")),
+	)
+
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		hashes := parseStringSlice(req, "hashes")
+		if len(hashes) == 0 {
+			return mcp.NewToolResultError("hashes must not be empty"), nil //nolint:nilerr
+		}
+		deleteFiles := mcp.ParseArgument(req, "delete_files", false).(bool)
+
+		found, err := fetchHashStates(ctx, qc, hashes)
+		if err != nil {
+			return mcp.NewToolResultError("lookup error: " + err.Error()), nil //nolint:nilerr
+		}
+
+		toDelete := make([]string, 0, len(hashes))
+		notFound := make([]string, 0)
+		for _, h := range hashes {
+			if _, ok := found[h]; ok {
+				toDelete = append(toDelete, h)
+			} else {
+				notFound = append(notFound, h)
+			}
+		}
+
+		if len(toDelete) > 0 {
+			if err := qc.DeleteTorrentsCtx(ctx, toDelete, deleteFiles); err != nil {
+				return mcp.NewToolResultError("delete error: " + err.Error()), nil //nolint:nilerr
+			}
+		}
+
+		b, err := json.Marshal(map[string][]string{
+			"deleted":   toDelete,
+			"not_found": notFound,
+		})
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	return tool, handler
+}
