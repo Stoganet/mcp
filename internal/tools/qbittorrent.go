@@ -307,7 +307,7 @@ func QBitTorrentDetail(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallT
 
 func QBitStop(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("qbit_stop",
-		mcp.WithDescription(`Stop one or more torrents. Pass ["all"] to stop everything.`),
+		mcp.WithDescription(`Stop one or more torrents. Pass ["all"] to stop everything. Unknown hashes are silently ignored by qBittorrent.`),
 		mcp.WithArray("hashes", mcp.Required(), mcp.Description(`Torrent info hashes, or ["all"]`)),
 	)
 
@@ -319,15 +319,7 @@ func QBitStop(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReques
 		if err := qc.StopCtx(ctx, hashes); err != nil {
 			return mcp.NewToolResultError("stop error: " + err.Error()), nil //nolint:nilerr
 		}
-		result, err := verifyStopState(ctx, qc, hashes)
-		if err != nil {
-			result = map[string][]string{"stopped": hashes, "already_stopped": {}, "not_found": {}, "verify_error": {err.Error()}}
-		}
-		b, err := json.Marshal(result)
-		if err != nil {
-			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
-		}
-		return mcp.NewToolResultText(string(b)), nil
+		return mcp.NewToolResultText(`{"ok":true}`), nil
 	}
 
 	return tool, handler
@@ -335,7 +327,7 @@ func QBitStop(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReques
 
 func QBitStart(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("qbit_start",
-		mcp.WithDescription(`Start one or more stopped torrents. Pass ["all"] to start everything.`),
+		mcp.WithDescription(`Start one or more stopped torrents. Pass ["all"] to start everything. Unknown hashes are silently ignored by qBittorrent.`),
 		mcp.WithArray("hashes", mcp.Required(), mcp.Description(`Torrent info hashes, or ["all"]`)),
 	)
 
@@ -347,95 +339,10 @@ func QBitStart(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReque
 		if err := qc.StartCtx(ctx, hashes); err != nil {
 			return mcp.NewToolResultError("start error: " + err.Error()), nil //nolint:nilerr
 		}
-		result, err := verifyStartState(ctx, qc, hashes)
-		if err != nil {
-			result = map[string][]string{"started": hashes, "already_active": {}, "not_found": {}, "verify_error": {err.Error()}}
-		}
-		b, err := json.Marshal(result)
-		if err != nil {
-			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
-		}
-		return mcp.NewToolResultText(string(b)), nil
+		return mcp.NewToolResultText(`{"ok":true}`), nil
 	}
 
 	return tool, handler
-}
-
-func fetchHashStates(ctx context.Context, qc QBitClient, hashes []string) (map[string]string, error) {
-	torrents, err := qc.GetTorrentsCtx(ctx, qbit.TorrentFilterOptions{
-		Filter: qbit.TorrentFilterAll,
-		Hashes: hashes,
-	})
-	if err != nil {
-		return nil, err
-	}
-	found := make(map[string]string, len(torrents))
-	for _, t := range torrents {
-		found[t.Hash] = mapTorrentState(t.State)
-	}
-	return found, nil
-}
-
-func verifyStopState(ctx context.Context, qc QBitClient, hashes []string) (map[string][]string, error) {
-	if len(hashes) == 1 && hashes[0] == "all" {
-		return map[string][]string{"stopped": {"all"}, "already_stopped": {}, "not_found": {}}, nil
-	}
-
-	found, err := fetchHashStates(ctx, qc, hashes)
-	if err != nil {
-		return nil, err
-	}
-
-	stopped, alreadyStopped, notFound := make([]string, 0), make([]string, 0), make([]string, 0)
-	for _, h := range hashes {
-		state, ok := found[h]
-		if !ok {
-			notFound = append(notFound, h)
-			continue
-		}
-		if state == "stopped" {
-			alreadyStopped = append(alreadyStopped, h)
-		} else {
-			stopped = append(stopped, h)
-		}
-	}
-
-	return map[string][]string{
-		"stopped":         stopped,
-		"already_stopped": alreadyStopped,
-		"not_found":       notFound,
-	}, nil
-}
-
-func verifyStartState(ctx context.Context, qc QBitClient, hashes []string) (map[string][]string, error) {
-	if len(hashes) == 1 && hashes[0] == "all" {
-		return map[string][]string{"started": {"all"}, "already_active": {}, "not_found": {}}, nil
-	}
-
-	found, err := fetchHashStates(ctx, qc, hashes)
-	if err != nil {
-		return nil, err
-	}
-
-	started, alreadyActive, notFound := make([]string, 0), make([]string, 0), make([]string, 0)
-	for _, h := range hashes {
-		state, ok := found[h]
-		if !ok {
-			notFound = append(notFound, h)
-			continue
-		}
-		if state == "stopped" {
-			started = append(started, h)
-		} else {
-			alreadyActive = append(alreadyActive, h)
-		}
-	}
-
-	return map[string][]string{
-		"started":        started,
-		"already_active": alreadyActive,
-		"not_found":      notFound,
-	}, nil
 }
 
 func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
@@ -452,15 +359,22 @@ func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequ
 		}
 		deleteFiles := mcp.ParseBoolean(req, "delete_files", false)
 
-		found, err := fetchHashStates(ctx, qc, hashes)
+		torrents, err := qc.GetTorrentsCtx(ctx, qbit.TorrentFilterOptions{
+			Filter: qbit.TorrentFilterAll,
+			Hashes: hashes,
+		})
 		if err != nil {
 			return mcp.NewToolResultError("lookup error: " + err.Error()), nil //nolint:nilerr
+		}
+		existing := make(map[string]struct{}, len(torrents))
+		for _, t := range torrents {
+			existing[t.Hash] = struct{}{}
 		}
 
 		toDelete := make([]string, 0, len(hashes))
 		notFound := make([]string, 0)
 		for _, h := range hashes {
-			if _, ok := found[h]; ok {
+			if _, ok := existing[h]; ok {
 				toDelete = append(toDelete, h)
 			} else {
 				notFound = append(notFound, h)

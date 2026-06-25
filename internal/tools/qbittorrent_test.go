@@ -303,32 +303,15 @@ func TestQBitStop_EmptyHashes(t *testing.T) {
 	resultError(t, r)
 }
 
-func TestQBitStop_Categorization(t *testing.T) {
+func TestQBitStop_Success(t *testing.T) {
 	mock := &mockQBitClient{
 		stopFn: func(_ context.Context, _ []string) error { return nil },
-		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
-			return []qbit.Torrent{
-				{Hash: "aaa", State: qbit.TorrentStateStoppedDl},
-				{Hash: "bbb", State: qbit.TorrentStateDownloading},
-			}, nil
-		},
 	}
 	_, handler := tools.QBitStop(mock)
-	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb", "ccc"}})
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb"}})
 	body := resultText(t, r)
-
-	var out map[string][]string
-	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(out["already_stopped"]) != 1 || out["already_stopped"][0] != "aaa" {
-		t.Errorf("want already_stopped=[aaa], got %v", out["already_stopped"])
-	}
-	if len(out["stopped"]) != 1 || out["stopped"][0] != "bbb" {
-		t.Errorf("want stopped=[bbb], got %v", out["stopped"])
-	}
-	if len(out["not_found"]) != 1 || out["not_found"][0] != "ccc" {
-		t.Errorf("want not_found=[ccc], got %v", out["not_found"])
+	if body != `{"ok":true}` {
+		t.Errorf("want {\"ok\":true}, got %s", body)
 	}
 }
 
@@ -351,32 +334,15 @@ func TestQBitStart_EmptyHashes(t *testing.T) {
 	resultError(t, r)
 }
 
-func TestQBitStart_Categorization(t *testing.T) {
+func TestQBitStart_Success(t *testing.T) {
 	mock := &mockQBitClient{
 		startFn: func(_ context.Context, _ []string) error { return nil },
-		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
-			return []qbit.Torrent{
-				{Hash: "aaa", State: qbit.TorrentStateStoppedDl},
-				{Hash: "bbb", State: qbit.TorrentStateDownloading},
-			}, nil
-		},
 	}
 	_, handler := tools.QBitStart(mock)
-	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb", "ccc"}})
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb"}})
 	body := resultText(t, r)
-
-	var out map[string][]string
-	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(out["started"]) != 1 || out["started"][0] != "aaa" {
-		t.Errorf("want started=[aaa], got %v", out["started"])
-	}
-	if len(out["already_active"]) != 1 || out["already_active"][0] != "bbb" {
-		t.Errorf("want already_active=[bbb], got %v", out["already_active"])
-	}
-	if len(out["not_found"]) != 1 || out["not_found"][0] != "ccc" {
-		t.Errorf("want not_found=[ccc], got %v", out["not_found"])
+	if body != `{"ok":true}` {
+		t.Errorf("want {\"ok\":true}, got %s", body)
 	}
 }
 
@@ -674,53 +640,5 @@ func TestQBitPreferences_GetBlockedKeyRejected(t *testing.T) {
 	msg := resultError(t, r)
 	if !strings.Contains(msg, "proxy_password") {
 		t.Errorf("want error to name blocked key, got %q", msg)
-	}
-}
-
-func TestQBitStop_VerifyErrorStillReportsSuccess(t *testing.T) {
-	callCount := 0
-	mock := &mockQBitClient{
-		stopFn: func(_ context.Context, _ []string) error { return nil },
-		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
-			callCount++
-			return nil, fmt.Errorf("network blip")
-		},
-	}
-	_, handler := tools.QBitStop(mock)
-	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
-	body := resultText(t, r)
-
-	var out map[string][]string
-	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(out["stopped"]) == 0 {
-		t.Errorf("want stopped to contain hash, got %v", out["stopped"])
-	}
-	if len(out["verify_error"]) == 0 {
-		t.Errorf("want verify_error field when verification fails")
-	}
-}
-
-func TestQBitStart_VerifyErrorStillReportsSuccess(t *testing.T) {
-	mock := &mockQBitClient{
-		startFn: func(_ context.Context, _ []string) error { return nil },
-		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
-			return nil, fmt.Errorf("network blip")
-		},
-	}
-	_, handler := tools.QBitStart(mock)
-	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
-	body := resultText(t, r)
-
-	var out map[string][]string
-	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(out["started"]) == 0 {
-		t.Errorf("want started to contain hash, got %v", out["started"])
-	}
-	if len(out["verify_error"]) == 0 {
-		t.Errorf("want verify_error field when verification fails")
 	}
 }
