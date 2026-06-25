@@ -345,6 +345,11 @@ func QBitStart(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolReque
 	return tool, handler
 }
 
+type deleteResult struct {
+	Deleted  []string `json:"deleted"`
+	NotFound []string `json:"not_found"`
+}
+
 func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("qbit_delete",
 		mcp.WithDescription("Delete one or more torrents. Set delete_files=true to also remove downloaded data from disk."),
@@ -387,10 +392,7 @@ func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequ
 			}
 		}
 
-		b, err := json.Marshal(map[string][]string{
-			"deleted":   toDelete,
-			"not_found": notFound,
-		})
+		b, err := json.Marshal(deleteResult{Deleted: toDelete, NotFound: notFound})
 		if err != nil {
 			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
 		}
@@ -477,6 +479,16 @@ func QBitTransferInfo(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallTo
 	return tool, handler
 }
 
+type prefsReadResult struct {
+	Mode        string                 `json:"mode"`
+	Preferences map[string]interface{} `json:"preferences"`
+}
+
+type prefsWriteResult struct {
+	Mode    string                 `json:"mode"`
+	Applied map[string]interface{} `json:"applied"`
+}
+
 var blockedPrefKeys = map[string]struct{}{
 	"web_ui_password":                        {},
 	"web_ui_username":                        {},
@@ -525,7 +537,7 @@ func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			if err := qc.SetPreferencesCtx(ctx, setMap); err != nil {
 				return mcp.NewToolResultError("set error: " + err.Error()), nil //nolint:nilerr
 			}
-			b, err := json.Marshal(map[string]interface{}{"mode": "write", "applied": setMap})
+			b, err := json.Marshal(prefsWriteResult{Mode: "write", Applied: setMap})
 			if err != nil {
 				return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
 			}
@@ -565,7 +577,7 @@ func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			allPrefs = filtered
 		}
 
-		b, err := json.Marshal(map[string]interface{}{"mode": "read", "preferences": allPrefs})
+		b, err := json.Marshal(prefsReadResult{Mode: "read", Preferences: allPrefs})
 		if err != nil {
 			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
 		}
