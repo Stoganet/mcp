@@ -632,7 +632,16 @@ func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
 		}
 
+		for k := range blockedPrefKeys {
+			delete(allPrefs, k)
+		}
+
 		if len(getKeys) > 0 {
+			for _, k := range getKeys {
+				if _, blocked := blockedPrefKeys[k]; blocked {
+					return mcp.NewToolResultError("key is blocked: " + k), nil //nolint:nilerr
+				}
+			}
 			filtered := make(map[string]interface{}, len(getKeys))
 			for _, k := range getKeys {
 				if v, ok := allPrefs[k]; ok {

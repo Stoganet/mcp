@@ -634,6 +634,49 @@ func TestQBitPreferences_SetWrongType(t *testing.T) {
 	resultError(t, r)
 }
 
+func TestQBitPreferences_ReadAllStripsBlockedKeys(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{}, nil
+		},
+	}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out struct {
+		Preferences map[string]interface{} `json:"preferences"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	blocked := []string{
+		"proxy_password", "proxy_username", "web_ui_username",
+		"dht", "pex", "lsd", "upnp",
+		"web_ui_csrf_protection_enabled", "web_ui_clickjacking_protection_enabled",
+		"web_ui_secure_cookie_enabled",
+	}
+	for _, k := range blocked {
+		if _, present := out.Preferences[k]; present {
+			t.Errorf("blocked key %q present in read response", k)
+		}
+	}
+}
+
+func TestQBitPreferences_GetBlockedKeyRejected(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{}, nil
+		},
+	}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{"get": []any{"proxy_password"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "proxy_password") {
+		t.Errorf("want error to name blocked key, got %q", msg)
+	}
+}
+
 func TestQBitStop_VerifyErrorStillReportsSuccess(t *testing.T) {
 	callCount := 0
 	mock := &mockQBitClient{
