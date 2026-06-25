@@ -295,3 +295,87 @@ func TestQBitTorrents_SpeedAndETAMapping(t *testing.T) {
 		t.Errorf("want eta_seconds=3600, got %v", tt.ETASeconds)
 	}
 }
+
+func TestQBitStop_EmptyHashes(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitStop(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{}})
+	resultError(t, r)
+}
+
+func TestQBitStop_Categorization(t *testing.T) {
+	mock := &mockQBitClient{
+		stopFn: func(_ context.Context, _ []string) error { return nil },
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return []qbit.Torrent{
+				{Hash: "aaa", State: qbit.TorrentStateStoppedDl},
+				{Hash: "bbb", State: qbit.TorrentStateDownloading},
+			}, nil
+		},
+	}
+	_, handler := tools.QBitStop(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb", "ccc"}})
+	body := resultText(t, r)
+
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out["already_stopped"]) != 1 || out["already_stopped"][0] != "aaa" {
+		t.Errorf("want already_stopped=[aaa], got %v", out["already_stopped"])
+	}
+	if len(out["stopped"]) != 1 || out["stopped"][0] != "bbb" {
+		t.Errorf("want stopped=[bbb], got %v", out["stopped"])
+	}
+	if len(out["not_found"]) != 1 || out["not_found"][0] != "ccc" {
+		t.Errorf("want not_found=[ccc], got %v", out["not_found"])
+	}
+}
+
+func TestQBitStop_SDKError(t *testing.T) {
+	mock := &mockQBitClient{
+		stopFn: func(_ context.Context, _ []string) error { return fmt.Errorf("timeout") },
+	}
+	_, handler := tools.QBitStop(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "timeout") {
+		t.Errorf("want error to contain 'timeout', got %q", msg)
+	}
+}
+
+func TestQBitStart_EmptyHashes(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitStart(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{}})
+	resultError(t, r)
+}
+
+func TestQBitStart_Categorization(t *testing.T) {
+	mock := &mockQBitClient{
+		startFn: func(_ context.Context, _ []string) error { return nil },
+		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
+			return []qbit.Torrent{
+				{Hash: "aaa", State: qbit.TorrentStateStoppedDl},
+				{Hash: "bbb", State: qbit.TorrentStateDownloading},
+			}, nil
+		},
+	}
+	_, handler := tools.QBitStart(mock)
+	r := callTool(t, handler, map[string]any{"hashes": []any{"aaa", "bbb", "ccc"}})
+	body := resultText(t, r)
+
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out["started"]) != 1 || out["started"][0] != "aaa" {
+		t.Errorf("want started=[aaa], got %v", out["started"])
+	}
+	if len(out["already_active"]) != 1 || out["already_active"][0] != "bbb" {
+		t.Errorf("want already_active=[bbb], got %v", out["already_active"])
+	}
+	if len(out["not_found"]) != 1 || out["not_found"][0] != "ccc" {
+		t.Errorf("want not_found=[ccc], got %v", out["not_found"])
+	}
+}
