@@ -29,5 +29,17 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 	s.AddTool(tools.DockerExec(dc, cfg.ComposeProject))
 	s.AddTool(tools.DockerTop(dc, cfg.ComposeProject))
 
+	if cfg.QBitUsername == "" || cfg.QBitPassword == "" {
+		return nil, fmt.Errorf("QBIT_USERNAME and QBIT_PASSWORD are required")
+	}
+	qc := tools.NewQBitClient(cfg.QBitHost, cfg.QBitUsername, cfg.QBitPassword)
+	s.AddTool(tools.QBitTorrents(qc))
+	s.AddTool(tools.QBitTorrentDetail(qc))
+	s.AddTool(tools.QBitStop(qc))
+	s.AddTool(tools.QBitStart(qc))
+	s.AddTool(tools.QBitDelete(qc))
+	s.AddTool(tools.QBitTransferInfo(qc))
+	s.AddTool(tools.QBitPreferences(qc))
+
 	return mcpgo.NewStreamableHTTPServer(s), nil
 }

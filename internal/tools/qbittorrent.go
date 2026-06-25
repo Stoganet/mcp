@@ -530,6 +530,9 @@ func QBitTransferInfo(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallTo
 		if torrentsErr != nil {
 			return mcp.NewToolResultError("torrents error: " + torrentsErr.Error()), nil //nolint:nilerr
 		}
+		if info == nil {
+			return mcp.NewToolResultError("transfer info unavailable"), nil //nolint:nilerr
+		}
 
 		counts := map[string]int{}
 		for _, t := range torrents {
