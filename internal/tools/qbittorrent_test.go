@@ -517,3 +517,99 @@ func TestQBitTransferInfo_SDKError(t *testing.T) {
 		t.Errorf("want error to contain 'unreachable', got %q", msg)
 	}
 }
+
+func TestQBitPreferences_ReadAll(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{MaxActiveDownloads: 5, DlLimit: 1024}, nil
+		},
+	}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out struct {
+		Mode        string                 `json:"mode"`
+		Preferences map[string]interface{} `json:"preferences"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Mode != "read" {
+		t.Errorf("want mode=read, got %q", out.Mode)
+	}
+	if out.Preferences == nil {
+		t.Fatal("want preferences map, got nil")
+	}
+}
+
+func TestQBitPreferences_ReadFiltered(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{MaxActiveDownloads: 5, DlLimit: 1024}, nil
+		},
+	}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{"get": []any{"max_active_downloads"}})
+	body := resultText(t, r)
+
+	var out struct {
+		Preferences map[string]interface{} `json:"preferences"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := out.Preferences["max_active_downloads"]; !ok {
+		t.Errorf("want max_active_downloads in response")
+	}
+	if len(out.Preferences) != 1 {
+		t.Errorf("want exactly 1 key, got %d", len(out.Preferences))
+	}
+}
+
+func TestQBitPreferences_WriteValid(t *testing.T) {
+	var gotPrefs map[string]interface{}
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, prefs map[string]interface{}) error {
+			gotPrefs = prefs
+			return nil
+		},
+	}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"max_active_downloads": float64(3)}})
+	body := resultText(t, r)
+
+	var out struct {
+		Mode    string                 `json:"mode"`
+		Applied map[string]interface{} `json:"applied"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Mode != "write" {
+		t.Errorf("want mode=write, got %q", out.Mode)
+	}
+	if gotPrefs["max_active_downloads"] != float64(3) {
+		t.Errorf("wrong value passed to SDK: %v", gotPrefs)
+	}
+}
+
+func TestQBitPreferences_WriteBlockedKey(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"web_ui_password": "hacked"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "web_ui_password") {
+		t.Errorf("want error to name blocked key, got %q", msg)
+	}
+}
+
+func TestQBitPreferences_GetAndSetMutuallyExclusive(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitPreferences(mock)
+	r := callTool(t, handler, map[string]any{
+		"get": []any{"max_active_downloads"},
+		"set": map[string]any{"max_active_downloads": float64(3)},
+	})
+	resultError(t, r)
+}

@@ -559,3 +559,83 @@ func QBitTransferInfo(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallTo
 
 	return tool, handler
 }
+
+var blockedPrefKeys = map[string]struct{}{
+	"web_ui_password":                        {},
+	"web_ui_username":                        {},
+	"proxy_password":                         {},
+	"proxy_username":                         {},
+	"dht":                                    {},
+	"pex":                                    {},
+	"lsd":                                    {},
+	"upnp":                                   {},
+	"web_ui_csrf_protection_enabled":         {},
+	"web_ui_clickjacking_protection_enabled": {},
+	"web_ui_secure_cookie_enabled":           {},
+}
+
+func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("qbit_preferences",
+		mcp.WithDescription("Get or set qBittorrent application preferences. get and set are mutually exclusive. "+
+			"Blocked keys (credentials, peer discovery, security hardening) are rejected on write."),
+		mcp.WithArray("get", mcp.Description("Preference keys to read. Omit for all preferences.")),
+		mcp.WithObject("set", mcp.Description("Key-value pairs to set. Providing this makes it a write operation.")),
+	)
+
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		getKeys := parseStringSlice(req, "get")
+		setMap, _ := mcp.ParseArgument(req, "set", nil).(map[string]interface{})
+
+		if len(getKeys) > 0 && len(setMap) > 0 {
+			return mcp.NewToolResultError("get and set are mutually exclusive"), nil //nolint:nilerr
+		}
+
+		if len(setMap) > 0 {
+			for k := range setMap {
+				if _, blocked := blockedPrefKeys[k]; blocked {
+					return mcp.NewToolResultError("key is blocked: " + k), nil //nolint:nilerr
+				}
+			}
+			if err := qc.SetPreferencesCtx(ctx, setMap); err != nil {
+				return mcp.NewToolResultError("set error: " + err.Error()), nil //nolint:nilerr
+			}
+			b, err := json.Marshal(map[string]interface{}{"mode": "write", "applied": setMap})
+			if err != nil {
+				return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+			}
+			return mcp.NewToolResultText(string(b)), nil
+		}
+
+		prefs, err := qc.GetAppPreferencesCtx(ctx)
+		if err != nil {
+			return mcp.NewToolResultError("get error: " + err.Error()), nil //nolint:nilerr
+		}
+
+		raw, err := json.Marshal(prefs)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		var allPrefs map[string]interface{}
+		if err := json.Unmarshal(raw, &allPrefs); err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+
+		if len(getKeys) > 0 {
+			filtered := make(map[string]interface{}, len(getKeys))
+			for _, k := range getKeys {
+				if v, ok := allPrefs[k]; ok {
+					filtered[k] = v
+				}
+			}
+			allPrefs = filtered
+		}
+
+		b, err := json.Marshal(map[string]interface{}{"mode": "read", "preferences": allPrefs})
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	return tool, handler
+}
