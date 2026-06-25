@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/Stoganet/mcp/internal/config"
@@ -28,6 +29,19 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 	s.AddTool(tools.DockerPull(dc, cfg.ComposeProject))
 	s.AddTool(tools.DockerExec(dc, cfg.ComposeProject))
 	s.AddTool(tools.DockerTop(dc, cfg.ComposeProject))
+
+	if cfg.QBitUsername == "" || cfg.QBitPassword == "" {
+		log.Println("QBIT_USERNAME or QBIT_PASSWORD not set — qBittorrent tools disabled")
+	} else {
+		qc := tools.NewQBitClient(cfg.QBitHost, cfg.QBitUsername, cfg.QBitPassword)
+		s.AddTool(tools.QBitTorrents(qc))
+		s.AddTool(tools.QBitTorrentDetail(qc))
+		s.AddTool(tools.QBitStop(qc))
+		s.AddTool(tools.QBitStart(qc))
+		s.AddTool(tools.QBitDelete(qc))
+		s.AddTool(tools.QBitTransferInfo(qc))
+		s.AddTool(tools.QBitPreferences(qc))
+	}
 
 	return mcpgo.NewStreamableHTTPServer(s), nil
 }
