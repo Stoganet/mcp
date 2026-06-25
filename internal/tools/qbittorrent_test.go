@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	qbit "github.com/autobrr/go-qbittorrent"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -88,7 +89,7 @@ func TestQBitTorrents_List(t *testing.T) {
 	mock := &mockQBitClient{
 		getTorrentsFn: func(_ context.Context, _ qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
 			return []qbit.Torrent{
-				{Hash: "abc123", Name: "Movie.mkv", State: qbit.TorrentStateDownloading, Progress: 0.5, Size: 2 * 1024 * 1024 * 1024, Category: "radarr"},
+				{Hash: "abc123", Name: "Movie.mkv", State: qbit.TorrentStateDownloading, Progress: 0.5, Size: 2 * 1024 * 1024 * 1024, Category: "radarr", AddedOn: 1750852800},
 				{Hash: "def456", Name: "Show.S01.mkv", State: qbit.TorrentStateStoppedDl, Progress: 1.0, Size: 1024 * 1024 * 1024, Category: "sonarr"},
 			}, nil
 		},
@@ -100,12 +101,12 @@ func TestQBitTorrents_List(t *testing.T) {
 
 	var out struct {
 		Total    int `json:"total"`
-		Filtered int `json:"filtered"`
 		Torrents []struct {
 			Hash     string  `json:"hash"`
 			State    string  `json:"state"`
 			SizeMB   float64 `json:"size_mb"`
 			Category string  `json:"category"`
+			AddedOn  string  `json:"added_on"`
 		} `json:"torrents"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
@@ -125,6 +126,9 @@ func TestQBitTorrents_List(t *testing.T) {
 	}
 	if out.Torrents[0].Category != "radarr" {
 		t.Errorf("want category=radarr, got %q", out.Torrents[0].Category)
+	}
+	if _, err := time.Parse(time.RFC3339, out.Torrents[0].AddedOn); err != nil {
+		t.Errorf("added_on not RFC3339: %q", out.Torrents[0].AddedOn)
 	}
 }
 
@@ -223,6 +227,38 @@ func TestQBitTorrentDetail_PseudoTrackersFiltered(t *testing.T) {
 	}
 	if out.Files[0].SizeMB != 1024 {
 		t.Errorf("want size_mb=1024, got %v", out.Files[0].SizeMB)
+	}
+}
+
+func TestQBitTorrentDetail_DatesFormatted(t *testing.T) {
+	files := qbit.TorrentFiles{}
+	mock := &mockQBitClient{
+		getTorrentPropertiesFn: func(_ context.Context, _ string) (qbit.TorrentProperties, error) {
+			return qbit.TorrentProperties{AdditionDate: 1750852800, CompletionDate: 0}, nil
+		},
+		getTorrentTrackersFn: func(_ context.Context, _ string) ([]qbit.TorrentTracker, error) {
+			return nil, nil
+		},
+		getFilesInformationFn: func(_ context.Context, _ string) (*qbit.TorrentFiles, error) {
+			return &files, nil
+		},
+	}
+	_, handler := tools.QBitTorrentDetail(mock)
+	r := callTool(t, handler, map[string]any{"hash": "abc123"})
+	body := resultText(t, r)
+
+	var out struct {
+		AdditionDate   string `json:"addition_date"`
+		CompletionDate string `json:"completion_date"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, err := time.Parse(time.RFC3339, out.AdditionDate); err != nil {
+		t.Errorf("addition_date not RFC3339: %q", out.AdditionDate)
+	}
+	if out.CompletionDate != "" {
+		t.Errorf("want completion_date absent for zero, got %q", out.CompletionDate)
 	}
 }
 

@@ -65,6 +65,13 @@ func bytesToKBs(b int64) float64 {
 	return math.Round(float64(b)/1024*100) / 100
 }
 
+func unixToRFC3339(ts int64) string {
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
+}
+
 type torrentItem struct {
 	Hash         string  `json:"hash"`
 	Name         string  `json:"name"`
@@ -85,7 +92,6 @@ type torrentItem struct {
 
 type torrentListResult struct {
 	Total    int           `json:"total"`
-	Filtered int           `json:"filtered"`
 	Torrents []torrentItem `json:"torrents"`
 }
 
@@ -157,14 +163,13 @@ func QBitTorrents(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRe
 				Peers:        t.NumLeechs,
 				Ratio:        t.Ratio,
 				Category:     t.Category,
-				AddedOn:      time.Unix(t.AddedOn, 0).UTC().Format(time.RFC3339),
+				AddedOn:      unixToRFC3339(t.AddedOn),
 				SavePath:     t.SavePath,
 			})
 		}
 
 		b, err := json.Marshal(torrentListResult{
 			Total:    len(items),
-			Filtered: len(items),
 			Torrents: items,
 		})
 		if err != nil {
@@ -204,8 +209,8 @@ type torrentDetailResult struct {
 	Seeds          int           `json:"seeds"`
 	Peers          int           `json:"peers"`
 	ShareRatio     float64       `json:"share_ratio"`
-	AdditionDate   int           `json:"addition_date"`
-	CompletionDate int           `json:"completion_date"`
+	AdditionDate   string        `json:"addition_date"`
+	CompletionDate string        `json:"completion_date,omitempty"`
 	IsPrivate      bool          `json:"is_private"`
 	Trackers       []trackerItem `json:"trackers"`
 	Files          []fileItem    `json:"files"`
@@ -290,8 +295,8 @@ func QBitTorrentDetail(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallT
 			Seeds:          props.Seeds,
 			Peers:          props.Peers,
 			ShareRatio:     props.ShareRatio,
-			AdditionDate:   props.AdditionDate,
-			CompletionDate: props.CompletionDate,
+			AdditionDate:   unixToRFC3339(int64(props.AdditionDate)),
+			CompletionDate: unixToRFC3339(int64(props.CompletionDate)),
 			IsPrivate:      props.IsPrivate,
 			Trackers:       trackerItems,
 			Files:          fileItems,
