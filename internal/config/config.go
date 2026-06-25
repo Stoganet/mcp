@@ -8,6 +8,9 @@ type Config struct {
 	Version        string
 	DockerHost     string
 	ComposeProject string
+	QBitHost       string
+	QBitUsername   string
+	QBitPassword   string
 }
 
 func LoadFromEnv() *Config {
@@ -17,6 +20,9 @@ func LoadFromEnv() *Config {
 		Version:        envOr("MCP_SERVER_VERSION", "dev"),
 		DockerHost:     os.Getenv("DOCKER_HOST"),
 		ComposeProject: envOr("COMPOSE_PROJECT", "services"),
+		QBitHost:       envOr("QBIT_HOST", "http://gluetun:8080"),
+		QBitUsername:   os.Getenv("QBIT_USERNAME"),
+		QBitPassword:   os.Getenv("QBIT_PASSWORD"),
 	}
 }
 
