@@ -257,8 +257,8 @@ func TestQBitTorrentDetail_DatesFormatted(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, out.AdditionDate); err != nil {
 		t.Errorf("addition_date not RFC3339: %q", out.AdditionDate)
 	}
-	if out.CompletionDate != "" {
-		t.Errorf("want completion_date absent for zero, got %q", out.CompletionDate)
+	if strings.Contains(body, "completion_date") {
+		t.Errorf("want completion_date absent from JSON when zero, got body: %s", body)
 	}
 }
 

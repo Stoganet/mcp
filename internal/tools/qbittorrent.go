@@ -378,13 +378,13 @@ func QBitDelete(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequ
 		}
 		existing := make(map[string]struct{}, len(torrents))
 		for _, t := range torrents {
-			existing[t.Hash] = struct{}{}
+			existing[strings.ToLower(t.Hash)] = struct{}{}
 		}
 
 		toDelete := make([]string, 0, len(hashes))
 		notFound := make([]string, 0)
 		for _, h := range hashes {
-			if _, ok := existing[h]; ok {
+			if _, ok := existing[strings.ToLower(h)]; ok {
 				toDelete = append(toDelete, h)
 			} else {
 				notFound = append(notFound, h)
