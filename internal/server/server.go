@@ -43,6 +43,13 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 		s.AddTool(tools.QBitPreferences(qc))
 	}
 
+	if cfg.RadarrAPIKey != "" {
+		rc := tools.NewRadarrClient(cfg.RadarrURL, cfg.RadarrAPIKey)
+		s.AddTool(tools.RadarrHealth(rc))
+	} else {
+		log.Println("RADARR_API_KEY not set — radarr tools disabled")
+	}
+
 	sr := tools.NewSystemReader()
 	s.AddTool(tools.SystemDiskUsage(sr))
 	s.AddTool(tools.SystemMountStatus(sr))
