@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"golift.io/starr"
 	"golift.io/starr/radarr"
@@ -288,6 +289,120 @@ func TestRadarrMovie_NoParam(t *testing.T) {
 	r := callTool(t, handler, nil)
 	if !r.IsError {
 		t.Error("want MCP error when no params provided")
+	}
+}
+
+func TestRadarrQueue(t *testing.T) {
+	eta, _ := time.Parse(time.RFC3339, "2026-06-26T18:00:00Z")
+	mock := &mockRadarrClient{
+		getQueueFn: func(_ context.Context, _, _ int) (*radarr.Queue, error) {
+			return &radarr.Queue{
+				TotalRecords: 1,
+				Records: []*radarr.QueueRecord{
+					{
+						ID:                      7,
+						MovieID:                 42,
+						Title:                   "The Dark Knight",
+						Status:                  "downloading",
+						Protocol:                "torrent",
+						Size:                    10 * (1 << 30),
+						Sizeleft:                4 * (1 << 30),
+						EstimatedCompletionTime: eta,
+					},
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrQueue(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out []struct {
+		ID       int64   `json:"id"`
+		MovieID  int64   `json:"movie_id"`
+		Title    string  `json:"title"`
+		Status   string  `json:"status"`
+		Protocol string  `json:"protocol"`
+		SizeGB   float64 `json:"size_gb"`
+		LeftGB   float64 `json:"left_gb"`
+		ETA      string  `json:"eta"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 record, got %d", len(out))
+	}
+	rec := out[0]
+	if rec.ID != 7 || rec.MovieID != 42 {
+		t.Errorf("id/movie_id mismatch: %+v", rec)
+	}
+	if rec.Title != "The Dark Knight" || rec.Status != "downloading" {
+		t.Errorf("title/status mismatch: %+v", rec)
+	}
+	if rec.Protocol != "torrent" {
+		t.Errorf("protocol = %q, want torrent", rec.Protocol)
+	}
+	if rec.SizeGB != 10 || rec.LeftGB != 4 {
+		t.Errorf("size mismatch: size_gb=%v left_gb=%v", rec.SizeGB, rec.LeftGB)
+	}
+	if rec.ETA != "2026-06-26T18:00:00Z" {
+		t.Errorf("eta = %q, want 2026-06-26T18:00:00Z", rec.ETA)
+	}
+}
+
+func TestRadarrQueue_ZeroETA(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQueueFn: func(_ context.Context, _, _ int) (*radarr.Queue, error) {
+			return &radarr.Queue{
+				Records: []*radarr.QueueRecord{
+					{ID: 1, Title: "Some Movie", Status: "queued"},
+					// EstimatedCompletionTime is zero value
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrQueue(mock)
+	r := callTool(t, handler, nil)
+
+	var raw []map[string]any
+	if err := json.Unmarshal([]byte(resultText(t, r)), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(raw) != 1 {
+		t.Fatalf("want 1 record, got %d", len(raw))
+	}
+	if _, ok := raw[0]["eta"]; ok {
+		t.Error("eta key must be absent when EstimatedCompletionTime is zero")
+	}
+}
+
+func TestRadarrQueue_Empty(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQueueFn: func(_ context.Context, _, _ int) (*radarr.Queue, error) {
+			return &radarr.Queue{Records: []*radarr.QueueRecord{}}, nil
+		},
+	}
+	_, handler := tools.RadarrQueue(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+	if body != "[]" {
+		t.Errorf("want empty array, got %q", body)
+	}
+}
+
+func TestRadarrQueue_Error(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQueueFn: func(_ context.Context, _, _ int) (*radarr.Queue, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	_, handler := tools.RadarrQueue(mock)
+	r := callTool(t, handler, nil)
+	if !r.IsError {
+		t.Error("want MCP error on queue fetch failure")
 	}
 }
 

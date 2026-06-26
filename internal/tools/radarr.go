@@ -32,7 +32,7 @@ func NewRadarrClient(url, apiKey string) RadarrClient {
 
 type movieFileOut struct {
 	RelativePath string  `json:"relative_path"`
-	Quality      string  `json:"quality"`
+	Quality      string  `json:"quality,omitempty"`
 	SizeGB       float64 `json:"size_gb"`
 	ReleaseGroup string  `json:"release_group,omitempty"`
 }
@@ -41,7 +41,7 @@ type movieOut struct {
 	ID               int64         `json:"id"`
 	Title            string        `json:"title"`
 	Year             int           `json:"year"`
-	TmdbID           int64         `json:"tmdb_id"`
+	TmdbID           int64         `json:"tmdb_id,omitempty"`
 	Status           string        `json:"status"`
 	Monitored        bool          `json:"monitored"`
 	HasFile          bool          `json:"has_file"`
@@ -144,6 +144,54 @@ func RadarrMovie(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolR
 		out := make([]movieOut, 0, len(movies))
 		for _, m := range movies {
 			out = append(out, toMovieOut(m))
+		}
+
+		b, err := json.Marshal(out)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return tool, handler
+}
+
+type queueRecordOut struct {
+	ID       int64   `json:"id"`
+	MovieID  int64   `json:"movie_id,omitempty"`
+	Title    string  `json:"title"`
+	Status   string  `json:"status"`
+	Protocol string  `json:"protocol"`
+	ETA      string  `json:"eta,omitempty"`
+	SizeGB   float64 `json:"size_gb"`
+	LeftGB   float64 `json:"left_gb"`
+}
+
+func RadarrQueue(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("radarr_queue",
+		mcp.WithDescription("List Radarr download queue. Returns all items currently downloading or pending import."),
+	)
+	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		queue, err := rc.GetQueueContext(ctx, 0, 0)
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		const gb = 1 << 30
+		out := make([]queueRecordOut, 0, len(queue.Records))
+		for _, r := range queue.Records {
+			rec := queueRecordOut{
+				ID:       r.ID,
+				MovieID:  r.MovieID,
+				Title:    r.Title,
+				Status:   r.Status,
+				Protocol: string(r.Protocol),
+				SizeGB:   round2(r.Size / gb),
+				LeftGB:   round2(r.Sizeleft / gb),
+			}
+			if !r.EstimatedCompletionTime.IsZero() {
+				rec.ETA = r.EstimatedCompletionTime.UTC().Format("2006-01-02T15:04:05Z")
+			}
+			out = append(out, rec)
 		}
 
 		b, err := json.Marshal(out)
