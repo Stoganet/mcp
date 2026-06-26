@@ -11,6 +11,7 @@ type Config struct {
 	QBitHost       string
 	QBitUsername   string
 	QBitPassword   string
+	GluetunURL     string
 }
 
 func LoadFromEnv() *Config {
@@ -23,6 +24,7 @@ func LoadFromEnv() *Config {
 		QBitHost:       envOr("QBIT_HOST", "http://gluetun:8080"),
 		QBitUsername:   os.Getenv("QBIT_USERNAME"),
 		QBitPassword:   os.Getenv("QBIT_PASSWORD"),
+		GluetunURL:     envOr("GLUETUN_CONTROL_URL", "http://gluetun:8000"),
 	}
 }
 
