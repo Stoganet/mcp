@@ -156,15 +156,20 @@ func RadarrMovie(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolR
 	return tool, handler
 }
 
-type queueRecordOut struct {
-	ID       int64   `json:"id"`
-	MovieID  int64   `json:"movie_id,omitempty"`
-	Title    string  `json:"title"`
-	Status   string  `json:"status"`
-	Protocol string  `json:"protocol"`
-	ETA      string  `json:"eta,omitempty"`
-	SizeGB   float64 `json:"size_gb"`
-	LeftGB   float64 `json:"left_gb"`
+type radarrQueueRecordOut struct {
+	ID             int64    `json:"id"`
+	MovieID        int64    `json:"movie_id,omitempty"`
+	Title          string   `json:"title"`
+	Status         string   `json:"status"`
+	Protocol       string   `json:"protocol"`
+	Quality        string   `json:"quality,omitempty"`
+	SizeGB         float64  `json:"size_gb"`
+	RemainingGB    float64  `json:"remaining_gb"`
+	Percent        float64  `json:"percent,omitempty"`
+	ETA            string   `json:"eta,omitempty"`
+	Indexer        string   `json:"indexer,omitempty"`
+	DownloadClient string   `json:"download_client,omitempty"`
+	Warnings       []string `json:"warnings"`
 }
 
 func RadarrQueue(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
@@ -178,19 +183,31 @@ func RadarrQueue(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolR
 		}
 
 		const gb = 1 << 30
-		out := make([]queueRecordOut, 0, len(queue.Records))
+		out := make([]radarrQueueRecordOut, 0, len(queue.Records))
 		for _, r := range queue.Records {
-			rec := queueRecordOut{
-				ID:       r.ID,
-				MovieID:  r.MovieID,
-				Title:    r.Title,
-				Status:   r.Status,
-				Protocol: string(r.Protocol),
-				SizeGB:   round2(r.Size / gb),
-				LeftGB:   round2(r.Sizeleft / gb),
+			rec := radarrQueueRecordOut{
+				ID:             r.ID,
+				MovieID:        r.MovieID,
+				Title:          r.Title,
+				Status:         r.Status,
+				Protocol:       string(r.Protocol),
+				SizeGB:         round2(r.Size / gb),
+				RemainingGB:    round2(r.Sizeleft / gb),
+				Indexer:        r.Indexer,
+				DownloadClient: r.DownloadClient,
+				Warnings:       []string{},
+			}
+			if r.Quality != nil && r.Quality.Quality != nil {
+				rec.Quality = r.Quality.Quality.Name
+			}
+			if r.Size > 0 {
+				rec.Percent = round2((r.Size - r.Sizeleft) / r.Size * 100)
 			}
 			if !r.EstimatedCompletionTime.IsZero() {
 				rec.ETA = r.EstimatedCompletionTime.UTC().Format(time.RFC3339)
+			}
+			for _, sm := range r.StatusMessages {
+				rec.Warnings = append(rec.Warnings, sm.Messages...)
 			}
 			out = append(out, rec)
 		}
@@ -298,25 +315,6 @@ func RadarrHistory(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToo
 	return tool, handler
 }
 
-type qualityProfileOut struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name"`
-	UpgradeAllowed bool   `json:"upgrade_allowed"`
-	Cutoff         string `json:"cutoff,omitempty"`
-}
-
-func resolveCutoff(cutoff int64, items []*starr.Quality) string {
-	for _, q := range items {
-		if q.Quality != nil && q.Quality.ID == cutoff {
-			return q.Quality.Name
-		}
-		if int64(q.ID) == cutoff && q.Name != "" {
-			return q.Name
-		}
-	}
-	return ""
-}
-
 func RadarrQualityProfiles(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("radarr_quality_profiles",
 		mcp.WithDescription("List all Radarr quality profiles."),
@@ -392,45 +390,56 @@ func RadarrUpdateQualityProfile(rc RadarrClient) (mcp.Tool, func(context.Context
 	return tool, handler
 }
 
-type healthMessage struct {
-	Source  string `json:"source"`
-	Type    string `json:"type"`
-	Message string `json:"message"`
-}
-
 func RadarrHealth(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("radarr_health",
-		mcp.WithDescription("Radarr health check: version and health warnings"),
+		mcp.WithDescription("Radarr health check: version, health warnings, and disk space"),
 	)
 	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var (
-			health [2]error
+			errs   [3]error
 			status *radarr.SystemStatus
 			msgs   []healthMessage
+			raw    []arrDiskSpace
 			wg     sync.WaitGroup
 		)
 
-		wg.Add(2)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
-			health[0] = rc.GetInto(ctx, starr.Request{URI: "/api/v3/health"}, &msgs)
+			errs[0] = rc.GetInto(ctx, starr.Request{URI: "/api/v3/health"}, &msgs)
 		}()
 		go func() {
 			defer wg.Done()
-			status, health[1] = rc.GetSystemStatusContext(ctx)
+			status, errs[1] = rc.GetSystemStatusContext(ctx)
+		}()
+		go func() {
+			defer wg.Done()
+			errs[2] = rc.GetInto(ctx, starr.Request{URI: "/api/v3/diskspace"}, &raw)
 		}()
 		wg.Wait()
 
-		if err := errors.Join(health[0], health[1]); err != nil {
+		if err := errors.Join(errs[0], errs[1], errs[2]); err != nil {
 			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
 		}
 
+		const gb = 1 << 30
+		disk := make([]diskSpaceEntry, 0, len(raw))
+		for _, d := range raw {
+			disk = append(disk, diskSpaceEntry{
+				Path:    d.Path,
+				FreeGB:  round2(float64(d.FreeSpace) / gb),
+				TotalGB: round2(float64(d.TotalSpace) / gb),
+			})
+		}
+
 		out := struct {
-			Version string          `json:"version"`
-			Issues  []healthMessage `json:"issues"`
+			Version string           `json:"version"`
+			Issues  []healthMessage  `json:"issues"`
+			Disk    []diskSpaceEntry `json:"disk_space"`
 		}{
 			Version: status.Version,
 			Issues:  msgs,
+			Disk:    disk,
 		}
 
 		b, err := json.Marshal(out)

@@ -63,10 +63,14 @@ func (m *mockRadarrClient) SendCommandContext(ctx context.Context, cmd *radarr.C
 func TestRadarrHealth(t *testing.T) {
 	mock := &mockRadarrClient{
 		getIntoFn: func(_ context.Context, req starr.Request, output any) error {
-			if req.URI == "/api/v3/health" {
+			switch req.URI {
+			case "/api/v3/health":
 				return json.Unmarshal([]byte(`[{"source":"Test","type":"warning","message":"update available"}]`), output)
+			case "/api/v3/diskspace":
+				return json.Unmarshal([]byte(`[{"path":"/data","freeSpace":107374182400,"totalSpace":429496729600}]`), output)
+			default:
+				return errors.New("unexpected URI: " + req.URI)
 			}
-			return errors.New("unexpected URI: " + req.URI)
 		},
 		getSystemStatusFn: func(_ context.Context) (*radarr.SystemStatus, error) {
 			return &radarr.SystemStatus{Version: "5.14.0"}, nil
@@ -83,6 +87,11 @@ func TestRadarrHealth(t *testing.T) {
 			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"issues"`
+		Disk []struct {
+			Path    string  `json:"path"`
+			FreeGB  float64 `json:"free_gb"`
+			TotalGB float64 `json:"total_gb"`
+		} `json:"disk_space"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -92,6 +101,12 @@ func TestRadarrHealth(t *testing.T) {
 	}
 	if len(out.Issues) != 1 || out.Issues[0].Type != "warning" {
 		t.Errorf("unexpected issues: %+v", out.Issues)
+	}
+	if len(out.Disk) != 1 || out.Disk[0].Path != "/data" {
+		t.Errorf("unexpected disk_space: %+v", out.Disk)
+	}
+	if out.Disk[0].FreeGB != 100 || out.Disk[0].TotalGB != 400 {
+		t.Errorf("disk GB = free %.0f total %.0f, want 100/400", out.Disk[0].FreeGB, out.Disk[0].TotalGB)
 	}
 }
 
@@ -290,13 +305,21 @@ func TestRadarrQueue(t *testing.T) {
 				TotalRecords: 1,
 				Records: []*radarr.QueueRecord{
 					{
-						ID:                      7,
-						MovieID:                 42,
-						Title:                   "The Dark Knight",
-						Status:                  "downloading",
-						Protocol:                "torrent",
-						Size:                    10 * (1 << 30),
-						Sizeleft:                4 * (1 << 30),
+						ID:       7,
+						MovieID:  42,
+						Title:    "The Dark Knight",
+						Status:   "downloading",
+						Protocol: "torrent",
+						Size:     10 * (1 << 30),
+						Sizeleft: 4 * (1 << 30),
+						Quality: &starr.Quality{
+							Quality: &starr.BaseQuality{Name: "Bluray-1080p"},
+						},
+						Indexer:        "MyIndexer",
+						DownloadClient: "qbit-gluetun",
+						StatusMessages: []*starr.StatusMessage{
+							{Title: "warn", Messages: []string{"stalled", "retry later"}},
+						},
 						EstimatedCompletionTime: eta,
 					},
 				},
@@ -309,14 +332,19 @@ func TestRadarrQueue(t *testing.T) {
 	body := resultText(t, r)
 
 	var out []struct {
-		ID       int64   `json:"id"`
-		MovieID  int64   `json:"movie_id"`
-		Title    string  `json:"title"`
-		Status   string  `json:"status"`
-		Protocol string  `json:"protocol"`
-		SizeGB   float64 `json:"size_gb"`
-		LeftGB   float64 `json:"left_gb"`
-		ETA      string  `json:"eta"`
+		ID             int64    `json:"id"`
+		MovieID        int64    `json:"movie_id"`
+		Title          string   `json:"title"`
+		Status         string   `json:"status"`
+		Protocol       string   `json:"protocol"`
+		Quality        string   `json:"quality"`
+		SizeGB         float64  `json:"size_gb"`
+		RemainingGB    float64  `json:"remaining_gb"`
+		Percent        float64  `json:"percent"`
+		ETA            string   `json:"eta"`
+		Indexer        string   `json:"indexer"`
+		DownloadClient string   `json:"download_client"`
+		Warnings       []string `json:"warnings"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -334,11 +362,26 @@ func TestRadarrQueue(t *testing.T) {
 	if rec.Protocol != "torrent" {
 		t.Errorf("protocol = %q, want torrent", rec.Protocol)
 	}
-	if rec.SizeGB != 10 || rec.LeftGB != 4 {
-		t.Errorf("size mismatch: size_gb=%v left_gb=%v", rec.SizeGB, rec.LeftGB)
+	if rec.Quality != "Bluray-1080p" {
+		t.Errorf("quality = %q, want Bluray-1080p", rec.Quality)
+	}
+	if rec.SizeGB != 10 || rec.RemainingGB != 4 {
+		t.Errorf("size mismatch: size_gb=%v remaining_gb=%v", rec.SizeGB, rec.RemainingGB)
+	}
+	if rec.Percent != 60 {
+		t.Errorf("percent = %v, want 60", rec.Percent)
 	}
 	if rec.ETA != "2026-06-26T18:00:00Z" {
 		t.Errorf("eta = %q, want 2026-06-26T18:00:00Z", rec.ETA)
+	}
+	if rec.Indexer != "MyIndexer" {
+		t.Errorf("indexer = %q, want MyIndexer", rec.Indexer)
+	}
+	if rec.DownloadClient != "qbit-gluetun" {
+		t.Errorf("download_client = %q, want qbit-gluetun", rec.DownloadClient)
+	}
+	if len(rec.Warnings) != 2 || rec.Warnings[0] != "stalled" {
+		t.Errorf("warnings = %v, want [stalled retry later]", rec.Warnings)
 	}
 }
 
@@ -750,10 +793,17 @@ func TestRadarrHealth_Error(t *testing.T) {
 	}
 }
 
-func TestRadarrHealth_BothErrorsJoined(t *testing.T) {
+func TestRadarrHealth_AllErrorsJoined(t *testing.T) {
 	mock := &mockRadarrClient{
-		getIntoFn: func(_ context.Context, _ starr.Request, _ any) error {
-			return errors.New("health failed")
+		getIntoFn: func(_ context.Context, req starr.Request, _ any) error {
+			switch req.URI {
+			case "/api/v3/health":
+				return errors.New("health failed")
+			case "/api/v3/diskspace":
+				return errors.New("diskspace failed")
+			default:
+				return errors.New("unexpected URI: " + req.URI)
+			}
 		},
 		getSystemStatusFn: func(_ context.Context) (*radarr.SystemStatus, error) {
 			return nil, errors.New("status failed")
@@ -763,7 +813,7 @@ func TestRadarrHealth_BothErrorsJoined(t *testing.T) {
 	_, handler := tools.RadarrHealth(mock)
 	r := callTool(t, handler, nil)
 	body := resultError(t, r)
-	if !strings.Contains(body, "health failed") || !strings.Contains(body, "status failed") {
-		t.Errorf("want both errors in message, got: %s", body)
+	if !strings.Contains(body, "health failed") || !strings.Contains(body, "status failed") || !strings.Contains(body, "diskspace failed") {
+		t.Errorf("want all three errors in message, got: %s", body)
 	}
 }
