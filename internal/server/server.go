@@ -56,6 +56,19 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 		log.Println("RADARR_API_KEY not set — radarr tools disabled")
 	}
 
+	if cfg.SonarrAPIKey != "" {
+		sc := tools.NewSonarrClient(cfg.SonarrURL, cfg.SonarrAPIKey)
+		s.AddTool(tools.SonarrHealth(sc))
+		s.AddTool(tools.SonarrSeries(sc))
+		s.AddTool(tools.SonarrEpisodes(sc))
+		s.AddTool(tools.SonarrQueue(sc))
+		s.AddTool(tools.SonarrSearch(sc))
+		s.AddTool(tools.SonarrQualityProfiles(sc))
+		s.AddTool(tools.SonarrUpdateQualityProfile(sc))
+	} else {
+		log.Println("SONARR_API_KEY not set — sonarr tools disabled")
+	}
+
 	sr := tools.NewSystemReader()
 	s.AddTool(tools.SystemDiskUsage(sr))
 	s.AddTool(tools.SystemMountStatus(sr))
