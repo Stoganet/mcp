@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -66,8 +68,8 @@ func SystemDiskUsage(sr SystemReader) (mcp.Tool, func(context.Context, mcp.CallT
 				continue
 			}
 			total := float64(fs.Blocks) * float64(fs.Bsize)
-			free := float64(fs.Bfree) * float64(fs.Bsize)
-			used := total - free
+			free := float64(fs.Bavail) * float64(fs.Bsize)
+			used := total - float64(fs.Bfree)*float64(fs.Bsize)
 			var pct float64
 			if total > 0 {
 				pct = used / total * 100
@@ -220,7 +222,7 @@ func gluetunGet(ctx context.Context, client *http.Client, url string) (map[strin
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -235,13 +237,12 @@ func gluetunGet(ctx context.Context, client *http.Client, url string) (map[strin
 }
 
 func joinURL(base, path string) (string, error) {
-	base = strings.TrimRight(base, "/")
 	if base == "" {
 		return "", fmt.Errorf("empty base URL")
 	}
-	return base + path, nil
+	return url.JoinPath(base, path)
 }
 
 func round2(f float64) float64 {
-	return float64(int(f*100+0.5)) / 100
+	return math.Round(f*100) / 100
 }

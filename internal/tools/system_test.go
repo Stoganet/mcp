@@ -36,9 +36,9 @@ func (m *mockSystemReader) InterfaceAddrs(iface net.Interface) ([]net.Addr, erro
 
 func TestSystemDiskUsage(t *testing.T) {
 	stats := map[string]syscall.Statfs_t{
-		"/":               {Blocks: 1000, Bfree: 400, Bsize: 1 << 20},
-		"/mnt/wd":         {Blocks: 2000, Bfree: 500, Bsize: 1 << 20},
-		"/var/lib/docker": {Blocks: 500, Bfree: 100, Bsize: 1 << 20},
+		"/":               {Blocks: 1000, Bfree: 400, Bavail: 380, Bsize: 1 << 20},
+		"/mnt/wd":         {Blocks: 2000, Bfree: 500, Bavail: 475, Bsize: 1 << 20},
+		"/var/lib/docker": {Blocks: 500, Bfree: 100, Bavail: 95, Bsize: 1 << 20},
 	}
 	mock := &mockSystemReader{
 		statfsFn: func(path string) (syscall.Statfs_t, error) {
@@ -55,6 +55,7 @@ func TestSystemDiskUsage(t *testing.T) {
 
 	var out []struct {
 		Path    string  `json:"path"`
+		FreeGB  float64 `json:"free_gb"`
 		Percent float64 `json:"percent_used"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
@@ -65,15 +66,19 @@ func TestSystemDiskUsage(t *testing.T) {
 	}
 	want := []struct {
 		path    string
+		freeGB  float64
 		percent float64
 	}{
-		{"/", 60},
-		{"/mnt/wd", 75},
-		{"/var/lib/docker", 80},
+		{"/", 0.37, 60},
+		{"/mnt/wd", 0.46, 75},
+		{"/var/lib/docker", 0.09, 80},
 	}
 	for i, w := range want {
 		if out[i].Path != w.path {
 			t.Errorf("[%d] path = %q, want %q", i, out[i].Path, w.path)
+		}
+		if out[i].FreeGB != w.freeGB {
+			t.Errorf("[%d] free_gb = %v, want %v", i, out[i].FreeGB, w.freeGB)
 		}
 		if out[i].Percent != w.percent {
 			t.Errorf("[%d] percent = %v, want %v", i, out[i].Percent, w.percent)
