@@ -541,6 +541,54 @@ func TestRadarrHistory_Error(t *testing.T) {
 	}
 }
 
+func TestRadarrSearch(t *testing.T) {
+	mock := &mockRadarrClient{
+		sendCommandFn: func(_ context.Context, cmd *radarr.CommandRequest) (*radarr.CommandResponse, error) {
+			if cmd.Name != "MoviesSearch" || len(cmd.MovieIDs) != 1 || cmd.MovieIDs[0] != 42 {
+				return nil, errors.New("unexpected command")
+			}
+			return &radarr.CommandResponse{ID: 7, Status: "queued"}, nil
+		},
+	}
+
+	_, handler := tools.RadarrSearch(mock)
+	r := callTool(t, handler, map[string]any{"id": float64(42)})
+	body := resultText(t, r)
+
+	var out struct {
+		CommandID int64  `json:"command_id"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.CommandID != 7 || out.Status != "queued" {
+		t.Errorf("unexpected response: %+v", out)
+	}
+}
+
+func TestRadarrSearch_MissingID(t *testing.T) {
+	mock := &mockRadarrClient{}
+	_, handler := tools.RadarrSearch(mock)
+	r := callTool(t, handler, nil)
+	if !r.IsError {
+		t.Error("want MCP error when id not provided")
+	}
+}
+
+func TestRadarrSearch_Error(t *testing.T) {
+	mock := &mockRadarrClient{
+		sendCommandFn: func(_ context.Context, _ *radarr.CommandRequest) (*radarr.CommandResponse, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	_, handler := tools.RadarrSearch(mock)
+	r := callTool(t, handler, map[string]any{"id": float64(1)})
+	if !r.IsError {
+		t.Error("want MCP error on command failure")
+	}
+}
+
 func TestRadarrHealth_Error(t *testing.T) {
 	mock := &mockRadarrClient{
 		getIntoFn: func(_ context.Context, _ starr.Request, _ any) error {

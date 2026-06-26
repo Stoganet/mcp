@@ -205,6 +205,42 @@ func RadarrQueue(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolR
 	return tool, handler
 }
 
+func RadarrSearch(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("radarr_search",
+		mcp.WithDescription("Trigger a movie search in Radarr by Radarr movie ID."),
+		mcp.WithNumber("id", mcp.Required(), mcp.Description("Radarr movie ID")),
+	)
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id := int64(mcp.ParseFloat64(req, "id", 0))
+		if id == 0 {
+			return mcp.NewToolResultError("id is required"), nil //nolint:nilerr
+		}
+
+		resp, err := rc.SendCommandContext(ctx, &radarr.CommandRequest{
+			Name:     "MoviesSearch",
+			MovieIDs: []int64{id},
+		})
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		out := struct {
+			CommandID int64  `json:"command_id"`
+			Status    string `json:"status"`
+		}{
+			CommandID: resp.ID,
+			Status:    resp.Status,
+		}
+
+		b, err := json.Marshal(out)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return tool, handler
+}
+
 type historyRecordOut struct {
 	ID        int64  `json:"id"`
 	MovieID   int64  `json:"movie_id,omitempty"`
