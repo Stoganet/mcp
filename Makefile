@@ -6,6 +6,7 @@ test:
 	$(GO) test -race -count=1 ./...
 
 lint:
+	gofmt -w .
 	golangci-lint run
 
 build:
