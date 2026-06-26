@@ -406,6 +406,141 @@ func TestRadarrQueue_Error(t *testing.T) {
 	}
 }
 
+func TestRadarrHistory(t *testing.T) {
+	date, _ := time.Parse(time.RFC3339, "2026-06-25T10:00:00Z")
+	mock := &mockRadarrClient{
+		getHistoryPageFn: func(_ context.Context, _ *starr.PageReq) (*radarr.History, error) {
+			return &radarr.History{
+				Records: []*radarr.HistoryRecord{
+					{
+						ID:          99,
+						MovieID:     42,
+						SourceTitle: "The.Dark.Knight.2008.mkv",
+						EventType:   "downloadFolderImported",
+						Date:        date,
+						Quality: &starr.Quality{
+							Quality: &starr.BaseQuality{Name: "Bluray-1080p"},
+						},
+						Data: struct {
+							Age                string         `json:"age"`
+							AgeHours           string         `json:"ageHours"`
+							AgeMinutes         string         `json:"ageMinutes"`
+							DownloadClient     string         `json:"downloadClient"`
+							DownloadClientName string         `json:"downloadClientName"`
+							DownloadURL        string         `json:"downloadUrl"`
+							DroppedPath        string         `json:"droppedPath"`
+							FileID             string         `json:"fileId"`
+							GUID               string         `json:"guid"`
+							ImportedPath       string         `json:"importedPath"`
+							Indexer            string         `json:"indexer"`
+							IndexerFlags       string         `json:"indexerFlags"`
+							IndexerID          string         `json:"indexerId"`
+							Message            string         `json:"message"`
+							NzbInfoURL         string         `json:"nzbInfoUrl"`
+							Protocol           starr.Protocol `json:"protocol"`
+							PublishedDate      time.Time      `json:"publishedDate"`
+							Reason             string         `json:"reason"`
+							ReleaseGroup       string         `json:"releaseGroup"`
+							Size               string         `json:"size"`
+							TmdbID             string         `json:"tmdbId"`
+							TorrentInfoHash    string         `json:"torrentInfoHash"`
+						}{Indexer: "NZBgeek"},
+					},
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrHistory(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out []struct {
+		ID        int64  `json:"id"`
+		MovieID   int64  `json:"movie_id"`
+		Title     string `json:"title"`
+		EventType string `json:"event_type"`
+		Date      string `json:"date"`
+		Quality   string `json:"quality"`
+		Indexer   string `json:"indexer"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 record, got %d", len(out))
+	}
+	rec := out[0]
+	if rec.ID != 99 || rec.MovieID != 42 {
+		t.Errorf("id/movie_id: %+v", rec)
+	}
+	if rec.EventType != "downloadFolderImported" {
+		t.Errorf("event_type = %q", rec.EventType)
+	}
+	if rec.Date != "2026-06-25T10:00:00Z" {
+		t.Errorf("date = %q", rec.Date)
+	}
+	if rec.Quality != "Bluray-1080p" {
+		t.Errorf("quality = %q", rec.Quality)
+	}
+	if rec.Indexer != "NZBgeek" {
+		t.Errorf("indexer = %q", rec.Indexer)
+	}
+}
+
+func TestRadarrHistory_MovieIDFilter(t *testing.T) {
+	mock := &mockRadarrClient{
+		getHistoryPageFn: func(_ context.Context, params *starr.PageReq) (*radarr.History, error) {
+			if params.Get("movieId") != "42" {
+				return nil, errors.New("unexpected movieId param")
+			}
+			return &radarr.History{Records: []*radarr.HistoryRecord{}}, nil
+		},
+	}
+
+	_, handler := tools.RadarrHistory(mock)
+	r := callTool(t, handler, map[string]any{"movie_id": float64(42)})
+	if r.IsError {
+		t.Errorf("unexpected error: %s", resultText(t, r))
+	}
+}
+
+func TestRadarrHistory_NilQuality(t *testing.T) {
+	mock := &mockRadarrClient{
+		getHistoryPageFn: func(_ context.Context, _ *starr.PageReq) (*radarr.History, error) {
+			return &radarr.History{
+				Records: []*radarr.HistoryRecord{
+					{ID: 1, EventType: "grabbed", Quality: nil},
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrHistory(mock)
+	r := callTool(t, handler, nil)
+
+	var raw []map[string]any
+	if err := json.Unmarshal([]byte(resultText(t, r)), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := raw[0]["quality"]; ok {
+		t.Error("quality key must be absent when nil")
+	}
+}
+
+func TestRadarrHistory_Error(t *testing.T) {
+	mock := &mockRadarrClient{
+		getHistoryPageFn: func(_ context.Context, _ *starr.PageReq) (*radarr.History, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	_, handler := tools.RadarrHistory(mock)
+	r := callTool(t, handler, nil)
+	if !r.IsError {
+		t.Error("want MCP error on history fetch failure")
+	}
+}
+
 func TestRadarrHealth_Error(t *testing.T) {
 	mock := &mockRadarrClient{
 		getIntoFn: func(_ context.Context, _ starr.Request, _ any) error {

@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"golift.io/starr"
 	"golift.io/starr/radarr"
@@ -189,7 +191,66 @@ func RadarrQueue(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolR
 				LeftGB:   round2(r.Sizeleft / gb),
 			}
 			if !r.EstimatedCompletionTime.IsZero() {
-				rec.ETA = r.EstimatedCompletionTime.UTC().Format("2006-01-02T15:04:05Z")
+				rec.ETA = r.EstimatedCompletionTime.UTC().Format(time.RFC3339)
+			}
+			out = append(out, rec)
+		}
+
+		b, err := json.Marshal(out)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return tool, handler
+}
+
+type historyRecordOut struct {
+	ID        int64  `json:"id"`
+	MovieID   int64  `json:"movie_id,omitempty"`
+	Title     string `json:"title"`
+	EventType string `json:"event_type"`
+	Date      string `json:"date"`
+	Quality   string `json:"quality,omitempty"`
+	Indexer   string `json:"indexer,omitempty"`
+}
+
+func RadarrHistory(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("radarr_history",
+		mcp.WithDescription("Recent Radarr history (grabs, imports, failures). Optionally filter by movie ID. Returns up to 25 most recent events."),
+		mcp.WithNumber("movie_id", mcp.Description("Radarr movie ID to filter history (optional)")),
+	)
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		movieID := int64(mcp.ParseFloat64(req, "movie_id", 0))
+
+		pageReq := &starr.PageReq{
+			PageSize: 25,
+			Page:     1,
+			SortKey:  "date",
+			SortDir:  starr.SortDescend,
+		}
+		if movieID != 0 {
+			pageReq.Values = url.Values{}
+			pageReq.Values.Set("movieId", starr.Str(movieID))
+		}
+
+		hist, err := rc.GetHistoryPageContext(ctx, pageReq)
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		out := make([]historyRecordOut, 0, len(hist.Records))
+		for _, r := range hist.Records {
+			rec := historyRecordOut{
+				ID:        r.ID,
+				MovieID:   r.MovieID,
+				Title:     r.SourceTitle,
+				EventType: r.EventType,
+				Date:      r.Date.UTC().Format(time.RFC3339),
+				Indexer:   r.Data.Indexer,
+			}
+			if r.Quality != nil && r.Quality.Quality != nil {
+				rec.Quality = r.Quality.Quality.Name
 			}
 			out = append(out, rec)
 		}
