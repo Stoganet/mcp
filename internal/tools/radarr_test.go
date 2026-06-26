@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,6 @@ type mockRadarrClient struct {
 	getQualityProfilesFn   func(ctx context.Context) ([]*radarr.QualityProfile, error)
 	getQualityProfileFn    func(ctx context.Context, id int64) (*radarr.QualityProfile, error)
 	updateQualityProfileFn func(ctx context.Context, p *radarr.QualityProfile) (*radarr.QualityProfile, error)
-	getCustomFormatsFn     func(ctx context.Context) ([]*radarr.CustomFormatOutput, error)
 	sendCommandFn          func(ctx context.Context, cmd *radarr.CommandRequest) (*radarr.CommandResponse, error)
 }
 
@@ -56,9 +56,6 @@ func (m *mockRadarrClient) GetQualityProfileContext(ctx context.Context, id int6
 func (m *mockRadarrClient) UpdateQualityProfileContext(ctx context.Context, p *radarr.QualityProfile) (*radarr.QualityProfile, error) {
 	return m.updateQualityProfileFn(ctx, p)
 }
-func (m *mockRadarrClient) GetCustomFormatsContext(ctx context.Context) ([]*radarr.CustomFormatOutput, error) {
-	return m.getCustomFormatsFn(ctx)
-}
 func (m *mockRadarrClient) SendCommandContext(ctx context.Context, cmd *radarr.CommandRequest) (*radarr.CommandResponse, error) {
 	return m.sendCommandFn(ctx, cmd)
 }
@@ -74,9 +71,6 @@ func TestRadarrHealth(t *testing.T) {
 		getSystemStatusFn: func(_ context.Context) (*radarr.SystemStatus, error) {
 			return &radarr.SystemStatus{Version: "5.14.0"}, nil
 		},
-		getMovieFn: func(_ context.Context, _ *radarr.GetMovie) ([]*radarr.Movie, error) {
-			return make([]*radarr.Movie, 139), nil
-		},
 	}
 
 	_, handler := tools.RadarrHealth(mock)
@@ -84,9 +78,8 @@ func TestRadarrHealth(t *testing.T) {
 	body := resultText(t, r)
 
 	var out struct {
-		Version    string `json:"version"`
-		MovieCount int    `json:"movie_count"`
-		Issues     []struct {
+		Version string `json:"version"`
+		Issues  []struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
 		} `json:"issues"`
@@ -96,9 +89,6 @@ func TestRadarrHealth(t *testing.T) {
 	}
 	if out.Version != "5.14.0" {
 		t.Errorf("version = %q, want 5.14.0", out.Version)
-	}
-	if out.MovieCount != 139 {
-		t.Errorf("movie_count = %d, want 139", out.MovieCount)
 	}
 	if len(out.Issues) != 1 || out.Issues[0].Type != "warning" {
 		t.Errorf("unexpected issues: %+v", out.Issues)
@@ -751,14 +741,29 @@ func TestRadarrHealth_Error(t *testing.T) {
 		getSystemStatusFn: func(_ context.Context) (*radarr.SystemStatus, error) {
 			return &radarr.SystemStatus{}, nil
 		},
-		getMovieFn: func(_ context.Context, _ *radarr.GetMovie) ([]*radarr.Movie, error) {
-			return nil, nil
-		},
 	}
 
 	_, handler := tools.RadarrHealth(mock)
 	r := callTool(t, handler, nil)
 	if !r.IsError {
 		t.Error("want MCP error when health endpoint fails")
+	}
+}
+
+func TestRadarrHealth_BothErrorsJoined(t *testing.T) {
+	mock := &mockRadarrClient{
+		getIntoFn: func(_ context.Context, _ starr.Request, _ any) error {
+			return errors.New("health failed")
+		},
+		getSystemStatusFn: func(_ context.Context) (*radarr.SystemStatus, error) {
+			return nil, errors.New("status failed")
+		},
+	}
+
+	_, handler := tools.RadarrHealth(mock)
+	r := callTool(t, handler, nil)
+	body := resultError(t, r)
+	if !strings.Contains(body, "health failed") || !strings.Contains(body, "status failed") {
+		t.Errorf("want both errors in message, got: %s", body)
 	}
 }

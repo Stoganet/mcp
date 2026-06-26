@@ -3,7 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"net/url"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +23,6 @@ type RadarrClient interface {
 	GetQualityProfilesContext(ctx context.Context) ([]*radarr.QualityProfile, error)
 	GetQualityProfileContext(ctx context.Context, profileID int64) (*radarr.QualityProfile, error)
 	UpdateQualityProfileContext(ctx context.Context, profile *radarr.QualityProfile) (*radarr.QualityProfile, error)
-	GetCustomFormatsContext(ctx context.Context) ([]*radarr.CustomFormatOutput, error)
 	SendCommandContext(ctx context.Context, cmd *radarr.CommandRequest) (*radarr.CommandResponse, error)
 	GetInto(ctx context.Context, req starr.Request, output any) error
 }
@@ -266,8 +265,7 @@ func RadarrHistory(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			SortDir:  starr.SortDescend,
 		}
 		if movieID != 0 {
-			pageReq.Values = url.Values{}
-			pageReq.Values.Set("movieId", starr.Str(movieID))
+			pageReq.Set("movieId", starr.Str(movieID))
 		}
 
 		hist, err := rc.GetHistoryPageContext(ctx, pageReq)
@@ -402,46 +400,37 @@ type healthMessage struct {
 
 func RadarrHealth(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("radarr_health",
-		mcp.WithDescription("Radarr health check: version, health warnings, and movie count"),
+		mcp.WithDescription("Radarr health check: version and health warnings"),
 	)
 	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var (
-			health []healthMessage
+			health [2]error
 			status *radarr.SystemStatus
-			movies []*radarr.Movie
-			errs   [3]error
+			msgs   []healthMessage
 			wg     sync.WaitGroup
 		)
 
-		wg.Add(3)
+		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			errs[0] = rc.GetInto(ctx, starr.Request{URI: "/api/v3/health"}, &health)
+			health[0] = rc.GetInto(ctx, starr.Request{URI: "/api/v3/health"}, &msgs)
 		}()
 		go func() {
 			defer wg.Done()
-			status, errs[1] = rc.GetSystemStatusContext(ctx)
-		}()
-		go func() {
-			defer wg.Done()
-			movies, errs[2] = rc.GetMovieContext(ctx, &radarr.GetMovie{})
+			status, health[1] = rc.GetSystemStatusContext(ctx)
 		}()
 		wg.Wait()
 
-		for _, err := range errs {
-			if err != nil {
-				return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
-			}
+		if err := errors.Join(health[0], health[1]); err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
 		}
 
 		out := struct {
-			Version    string          `json:"version"`
-			Issues     []healthMessage `json:"issues"`
-			MovieCount int             `json:"movie_count"`
+			Version string          `json:"version"`
+			Issues  []healthMessage `json:"issues"`
 		}{
-			Version:    status.Version,
-			Issues:     health,
-			MovieCount: len(movies),
+			Version: status.Version,
+			Issues:  msgs,
 		}
 
 		b, err := json.Marshal(out)
