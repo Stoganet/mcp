@@ -300,6 +300,100 @@ func RadarrHistory(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToo
 	return tool, handler
 }
 
+type qualityProfileOut struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	UpgradeAllowed bool   `json:"upgrade_allowed"`
+	Cutoff         string `json:"cutoff,omitempty"`
+}
+
+func resolveCutoff(cutoff int64, items []*starr.Quality) string {
+	for _, q := range items {
+		if q.Quality != nil && q.Quality.ID == cutoff {
+			return q.Quality.Name
+		}
+		if int64(q.ID) == cutoff && q.Name != "" {
+			return q.Name
+		}
+	}
+	return ""
+}
+
+func RadarrQualityProfiles(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("radarr_quality_profiles",
+		mcp.WithDescription("List all Radarr quality profiles."),
+	)
+	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		profiles, err := rc.GetQualityProfilesContext(ctx)
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		out := make([]qualityProfileOut, 0, len(profiles))
+		for _, p := range profiles {
+			out = append(out, qualityProfileOut{
+				ID:             p.ID,
+				Name:           p.Name,
+				UpgradeAllowed: p.UpgradeAllowed,
+				Cutoff:         resolveCutoff(p.Cutoff, p.Qualities),
+			})
+		}
+
+		b, err := json.Marshal(out)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return tool, handler
+}
+
+func RadarrUpdateQualityProfile(rc RadarrClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("radarr_update_quality_profile",
+		mcp.WithDescription("Update a Radarr quality profile. Fetches the existing profile and patches the provided fields."),
+		mcp.WithNumber("id", mcp.Required(), mcp.Description("Quality profile ID")),
+		mcp.WithString("name", mcp.Description("New profile name")),
+		mcp.WithBoolean("upgrade_allowed", mcp.Description("Whether quality upgrades are allowed")),
+	)
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id := int64(mcp.ParseFloat64(req, "id", 0))
+		if id == 0 {
+			return mcp.NewToolResultError("id is required"), nil //nolint:nilerr
+		}
+
+		profile, err := rc.GetQualityProfileContext(ctx, id)
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		if name := mcp.ParseString(req, "name", ""); name != "" {
+			profile.Name = name
+		}
+		if _, ok := req.GetArguments()["upgrade_allowed"]; ok {
+			profile.UpgradeAllowed = mcp.ParseBoolean(req, "upgrade_allowed", profile.UpgradeAllowed)
+		}
+
+		updated, err := rc.UpdateQualityProfileContext(ctx, profile)
+		if err != nil {
+			return mcp.NewToolResultError("radarr: " + err.Error()), nil //nolint:nilerr
+		}
+
+		out := qualityProfileOut{
+			ID:             updated.ID,
+			Name:           updated.Name,
+			UpgradeAllowed: updated.UpgradeAllowed,
+			Cutoff:         resolveCutoff(updated.Cutoff, updated.Qualities),
+		}
+
+		b, err := json.Marshal(out)
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+	return tool, handler
+}
+
 type healthMessage struct {
 	Source  string `json:"source"`
 	Type    string `json:"type"`

@@ -589,6 +589,160 @@ func TestRadarrSearch_Error(t *testing.T) {
 	}
 }
 
+func TestRadarrQualityProfiles(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQualityProfilesFn: func(_ context.Context) ([]*radarr.QualityProfile, error) {
+			return []*radarr.QualityProfile{
+				{
+					ID:             1,
+					Name:           "HD-1080p",
+					UpgradeAllowed: true,
+					Cutoff:         7,
+					Qualities: []*starr.Quality{
+						{Quality: &starr.BaseQuality{ID: 3, Name: "WEBDL-1080p"}, Allowed: true},
+						{Quality: &starr.BaseQuality{ID: 7, Name: "Bluray-1080p"}, Allowed: true},
+					},
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrQualityProfiles(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out []struct {
+		ID             int64  `json:"id"`
+		Name           string `json:"name"`
+		UpgradeAllowed bool   `json:"upgrade_allowed"`
+		Cutoff         string `json:"cutoff"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 profile, got %d", len(out))
+	}
+	if out[0].ID != 1 || out[0].Name != "HD-1080p" {
+		t.Errorf("id/name mismatch: %+v", out[0])
+	}
+	if out[0].Cutoff != "Bluray-1080p" {
+		t.Errorf("cutoff = %q, want Bluray-1080p", out[0].Cutoff)
+	}
+	if !out[0].UpgradeAllowed {
+		t.Error("want upgrade_allowed=true")
+	}
+}
+
+func TestRadarrQualityProfiles_CutoffGroup(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQualityProfilesFn: func(_ context.Context) ([]*radarr.QualityProfile, error) {
+			return []*radarr.QualityProfile{
+				{
+					ID:     2,
+					Name:   "Any",
+					Cutoff: 1000,
+					Qualities: []*starr.Quality{
+						{ID: 1000, Name: "HD Group", Items: []*starr.Quality{
+							{Quality: &starr.BaseQuality{ID: 3, Name: "WEBDL-1080p"}},
+						}},
+					},
+				},
+			}, nil
+		},
+	}
+
+	_, handler := tools.RadarrQualityProfiles(mock)
+	r := callTool(t, handler, nil)
+
+	var out []struct {
+		Cutoff string `json:"cutoff"`
+	}
+	if err := json.Unmarshal([]byte(resultText(t, r)), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out[0].Cutoff != "HD Group" {
+		t.Errorf("cutoff = %q, want HD Group", out[0].Cutoff)
+	}
+}
+
+func TestRadarrQualityProfiles_Error(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQualityProfilesFn: func(_ context.Context) ([]*radarr.QualityProfile, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	_, handler := tools.RadarrQualityProfiles(mock)
+	r := callTool(t, handler, nil)
+	if !r.IsError {
+		t.Error("want MCP error on fetch failure")
+	}
+}
+
+func TestRadarrUpdateQualityProfile(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQualityProfileFn: func(_ context.Context, id int64) (*radarr.QualityProfile, error) {
+			if id != 1 {
+				return nil, errors.New("unexpected id")
+			}
+			return &radarr.QualityProfile{
+				ID:             1,
+				Name:           "HD-1080p",
+				UpgradeAllowed: true,
+				Cutoff:         7,
+				Qualities:      []*starr.Quality{{Quality: &starr.BaseQuality{ID: 7, Name: "Bluray-1080p"}}},
+			}, nil
+		},
+		updateQualityProfileFn: func(_ context.Context, p *radarr.QualityProfile) (*radarr.QualityProfile, error) {
+			if p.Name != "HD-1080p Renamed" {
+				return nil, errors.New("unexpected name: " + p.Name)
+			}
+			return p, nil
+		},
+	}
+
+	_, handler := tools.RadarrUpdateQualityProfile(mock)
+	r := callTool(t, handler, map[string]any{"id": float64(1), "name": "HD-1080p Renamed"})
+	body := resultText(t, r)
+
+	var out struct {
+		ID     int64  `json:"id"`
+		Name   string `json:"name"`
+		Cutoff string `json:"cutoff"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Name != "HD-1080p Renamed" {
+		t.Errorf("name = %q", out.Name)
+	}
+	if out.Cutoff != "Bluray-1080p" {
+		t.Errorf("cutoff = %q, want Bluray-1080p", out.Cutoff)
+	}
+}
+
+func TestRadarrUpdateQualityProfile_MissingID(t *testing.T) {
+	mock := &mockRadarrClient{}
+	_, handler := tools.RadarrUpdateQualityProfile(mock)
+	r := callTool(t, handler, nil)
+	if !r.IsError {
+		t.Error("want MCP error when id not provided")
+	}
+}
+
+func TestRadarrUpdateQualityProfile_GetError(t *testing.T) {
+	mock := &mockRadarrClient{
+		getQualityProfileFn: func(_ context.Context, _ int64) (*radarr.QualityProfile, error) {
+			return nil, errors.New("not found")
+		},
+	}
+	_, handler := tools.RadarrUpdateQualityProfile(mock)
+	r := callTool(t, handler, map[string]any{"id": float64(99)})
+	if !r.IsError {
+		t.Error("want MCP error on get failure")
+	}
+}
+
 func TestRadarrHealth_Error(t *testing.T) {
 	mock := &mockRadarrClient{
 		getIntoFn: func(_ context.Context, _ starr.Request, _ any) error {

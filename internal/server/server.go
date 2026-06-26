@@ -50,6 +50,8 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 		s.AddTool(tools.RadarrQueue(rc))
 		s.AddTool(tools.RadarrHistory(rc))
 		s.AddTool(tools.RadarrSearch(rc))
+		s.AddTool(tools.RadarrQualityProfiles(rc))
+		s.AddTool(tools.RadarrUpdateQualityProfile(rc))
 	} else {
 		log.Println("RADARR_API_KEY not set — radarr tools disabled")
 	}
