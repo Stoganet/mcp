@@ -46,6 +46,7 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 	if cfg.RadarrAPIKey != "" {
 		rc := tools.NewRadarrClient(cfg.RadarrURL, cfg.RadarrAPIKey)
 		s.AddTool(tools.RadarrHealth(rc))
+		s.AddTool(tools.RadarrMovie(rc))
 	} else {
 		log.Println("RADARR_API_KEY not set — radarr tools disabled")
 	}
