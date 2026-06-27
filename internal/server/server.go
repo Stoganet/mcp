@@ -1,18 +1,46 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/Stoganet/mcp/internal/config"
 	"github.com/Stoganet/mcp/internal/tools"
+	"github.com/mark3labs/mcp-go/mcp"
 	mcpgo "github.com/mark3labs/mcp-go/server"
 )
+
+func toolLoggingHooks() *mcpgo.Hooks {
+	var starts sync.Map
+	h := &mcpgo.Hooks{}
+
+	h.AddBeforeCallTool(func(_ context.Context, id any, _ *mcp.CallToolRequest) {
+		starts.Store(id, time.Now())
+	})
+
+	h.AddAfterCallTool(func(_ context.Context, id any, req *mcp.CallToolRequest, result any) {
+		dur := time.Duration(0)
+		if v, ok := starts.LoadAndDelete(id); ok {
+			dur = time.Since(v.(time.Time))
+		}
+		status := "success"
+		if r, ok := result.(*mcp.CallToolResult); ok && r != nil && r.IsError {
+			status = "error"
+		}
+		log.Printf("tool=%s status=%s duration=%s", req.Params.Name, status, dur.Round(time.Millisecond))
+	})
+
+	return h
+}
 
 func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 	s := mcpgo.NewMCPServer(cfg.ServerName, cfg.Version,
 		mcpgo.WithToolCapabilities(true),
+		mcpgo.WithHooks(toolLoggingHooks()),
 	)
 
 	pingTool, pingHandler := tools.Ping(cfg.ServerName, cfg.Version)
