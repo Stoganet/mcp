@@ -952,14 +952,31 @@ func TestQBitSpeedLimits_DownloadLimitWrongType(t *testing.T) {
 }
 
 func TestQBitSpeedLimits_UseAltLimitsWrongType(t *testing.T) {
+	prefsCalled := false
 	mock := &mockQBitClient{
-		setPreferencesFn: func(_ context.Context, _ map[string]interface{}) error { return nil },
+		setPreferencesFn: func(_ context.Context, _ map[string]interface{}) error {
+			prefsCalled = true
+			return nil
+		},
 	}
 	_, handler := tools.QBitSpeedLimits(mock)
-	r := callTool(t, handler, map[string]any{"set": map[string]any{"use_alt_limits": "yes"}})
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"download_limit": float64(100), "use_alt_limits": "yes"}})
 	msg := resultError(t, r)
 	if !strings.Contains(msg, "use_alt_limits") {
 		t.Errorf("want error naming use_alt_limits, got %q", msg)
+	}
+	if prefsCalled {
+		t.Error("SetPreferences must not be called when use_alt_limits type is invalid")
+	}
+}
+
+func TestQBitSpeedLimits_FractionalHourRejected(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_from_hour": float64(22.5)}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "integer") {
+		t.Errorf("want error about integer hour, got %q", msg)
 	}
 }
 

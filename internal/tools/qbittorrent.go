@@ -702,6 +702,15 @@ func QBitSpeedLimits(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 
 		prefsUpdate := make(map[string]interface{})
 
+		var toggleAlt *bool
+		if v, ok := setMap["use_alt_limits"]; ok {
+			desired, ok := v.(bool)
+			if !ok {
+				return mcp.NewToolResultError("use_alt_limits must be a bool"), nil //nolint:nilerr
+			}
+			toggleAlt = &desired
+		}
+
 		if v, ok := setMap["download_limit"]; ok {
 			kbs, ok := toFloat64(v)
 			if !ok || kbs < 0 {
@@ -739,15 +748,15 @@ func QBitSpeedLimits(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 		}
 		if v, ok := setMap["schedule_from_hour"]; ok {
 			h, ok := toFloat64(v)
-			if !ok || h < 0 || h > 23 {
-				return mcp.NewToolResultError("schedule_from_hour must be 0-23"), nil //nolint:nilerr
+			if !ok || h < 0 || h > 23 || h != math.Trunc(h) {
+				return mcp.NewToolResultError("schedule_from_hour must be an integer 0-23"), nil //nolint:nilerr
 			}
 			prefsUpdate["schedule_from_hour"] = int(h)
 		}
 		if v, ok := setMap["schedule_to_hour"]; ok {
 			h, ok := toFloat64(v)
-			if !ok || h < 0 || h > 23 {
-				return mcp.NewToolResultError("schedule_to_hour must be 0-23"), nil //nolint:nilerr
+			if !ok || h < 0 || h > 23 || h != math.Trunc(h) {
+				return mcp.NewToolResultError("schedule_to_hour must be an integer 0-23"), nil //nolint:nilerr
 			}
 			prefsUpdate["schedule_to_hour"] = int(h)
 		}
@@ -769,16 +778,12 @@ func QBitSpeedLimits(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			}
 		}
 
-		if v, ok := setMap["use_alt_limits"]; ok {
-			desired, ok := v.(bool)
-			if !ok {
-				return mcp.NewToolResultError("use_alt_limits must be a bool"), nil //nolint:nilerr
-			}
+		if toggleAlt != nil {
 			current, err := qc.GetAlternativeSpeedLimitsModeCtx(ctx)
 			if err != nil {
 				return mcp.NewToolResultError("get alt mode error: " + err.Error()), nil //nolint:nilerr
 			}
-			if current != desired {
+			if current != *toggleAlt {
 				if err := qc.ToggleAlternativeSpeedLimitsCtx(ctx); err != nil {
 					return mcp.NewToolResultError("toggle alt mode error: " + err.Error()), nil //nolint:nilerr
 				}
