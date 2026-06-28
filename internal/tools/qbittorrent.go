@@ -790,7 +790,17 @@ func QBitSpeedLimits(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 			}
 		}
 
-		b, err := json.Marshal(map[string]interface{}{"mode": "write", "applied": setMap})
+		knownFields := []string{
+			"download_limit", "upload_limit", "alt_download_limit", "alt_upload_limit",
+			"schedule_enabled", "schedule_from_hour", "schedule_to_hour", "schedule_days", "use_alt_limits",
+		}
+		applied := make(map[string]interface{}, len(knownFields))
+		for _, k := range knownFields {
+			if v, ok := setMap[k]; ok {
+				applied[k] = v
+			}
+		}
+		b, err := json.Marshal(map[string]interface{}{"mode": "write", "applied": applied})
 		if err != nil {
 			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
 		}

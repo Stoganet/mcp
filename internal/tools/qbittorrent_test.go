@@ -980,6 +980,26 @@ func TestQBitSpeedLimits_FractionalHourRejected(t *testing.T) {
 	}
 }
 
+func TestQBitSpeedLimits_AppliedEchoesUserFacingKeys(t *testing.T) {
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, _ map[string]interface{}) error { return nil },
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"download_limit": float64(1024)}})
+	text := resultText(t, r)
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	applied, _ := resp["applied"].(map[string]interface{})
+	if applied["download_limit"] != float64(1024) {
+		t.Errorf("want applied.download_limit=1024, got %v", applied["download_limit"])
+	}
+	if _, hasInternal := applied["dl_limit"]; hasInternal {
+		t.Error("applied must not contain internal key dl_limit")
+	}
+}
+
 func TestQBitSpeedLimits_ReadSDKError(t *testing.T) {
 	mock := &mockQBitClient{
 		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
