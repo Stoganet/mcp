@@ -69,6 +69,7 @@ func NewHTTPHandler(cfg *config.Config) (http.Handler, error) {
 		s.AddTool(tools.QBitDelete(qc))
 		s.AddTool(tools.QBitTransferInfo(qc))
 		s.AddTool(tools.QBitPreferences(qc))
+		s.AddTool(tools.QBitSpeedLimits(qc))
 	}
 
 	if cfg.RadarrAPIKey != "" {

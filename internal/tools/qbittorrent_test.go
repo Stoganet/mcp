@@ -15,16 +15,18 @@ import (
 )
 
 type mockQBitClient struct {
-	getTorrentsFn          func(ctx context.Context, opts qbit.TorrentFilterOptions) ([]qbit.Torrent, error)
-	getTorrentPropertiesFn func(ctx context.Context, hash string) (qbit.TorrentProperties, error)
-	getTorrentTrackersFn   func(ctx context.Context, hash string) ([]qbit.TorrentTracker, error)
-	getFilesInformationFn  func(ctx context.Context, hash string) (*qbit.TorrentFiles, error)
-	stopFn                 func(ctx context.Context, hashes []string) error
-	startFn                func(ctx context.Context, hashes []string) error
-	deleteTorrentsFn       func(ctx context.Context, hashes []string, deleteFiles bool) error
-	getTransferInfoFn      func(ctx context.Context) (*qbit.TransferInfo, error)
-	getAppPreferencesFn    func(ctx context.Context) (qbit.AppPreferences, error)
-	setPreferencesFn       func(ctx context.Context, prefs map[string]interface{}) error
+	getTorrentsFn           func(ctx context.Context, opts qbit.TorrentFilterOptions) ([]qbit.Torrent, error)
+	getTorrentPropertiesFn  func(ctx context.Context, hash string) (qbit.TorrentProperties, error)
+	getTorrentTrackersFn    func(ctx context.Context, hash string) ([]qbit.TorrentTracker, error)
+	getFilesInformationFn   func(ctx context.Context, hash string) (*qbit.TorrentFiles, error)
+	stopFn                  func(ctx context.Context, hashes []string) error
+	startFn                 func(ctx context.Context, hashes []string) error
+	deleteTorrentsFn        func(ctx context.Context, hashes []string, deleteFiles bool) error
+	getTransferInfoFn       func(ctx context.Context) (*qbit.TransferInfo, error)
+	getAppPreferencesFn     func(ctx context.Context) (qbit.AppPreferences, error)
+	setPreferencesFn        func(ctx context.Context, prefs map[string]interface{}) error
+	getAltSpeedLimitsModeFn func(ctx context.Context) (bool, error)
+	toggleAltSpeedLimitsFn  func(ctx context.Context) error
 }
 
 func (m *mockQBitClient) GetTorrentsCtx(ctx context.Context, opts qbit.TorrentFilterOptions) ([]qbit.Torrent, error) {
@@ -56,6 +58,18 @@ func (m *mockQBitClient) GetAppPreferencesCtx(ctx context.Context) (qbit.AppPref
 }
 func (m *mockQBitClient) SetPreferencesCtx(ctx context.Context, prefs map[string]interface{}) error {
 	return m.setPreferencesFn(ctx, prefs)
+}
+func (m *mockQBitClient) GetAlternativeSpeedLimitsModeCtx(ctx context.Context) (bool, error) {
+	if m.getAltSpeedLimitsModeFn != nil {
+		return m.getAltSpeedLimitsModeFn(ctx)
+	}
+	return false, nil
+}
+func (m *mockQBitClient) ToggleAlternativeSpeedLimitsCtx(ctx context.Context) error {
+	if m.toggleAltSpeedLimitsFn != nil {
+		return m.toggleAltSpeedLimitsFn(ctx)
+	}
+	return nil
 }
 
 func callTool(t *testing.T, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error), args map[string]any) *mcp.CallToolResult {
@@ -676,5 +690,303 @@ func TestQBitPreferences_GetBlockedKeyRejected(t *testing.T) {
 	msg := resultError(t, r)
 	if !strings.Contains(msg, "proxy_password") {
 		t.Errorf("want error to name blocked key, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_Read(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{
+				DlLimit:          2048 * 1024,
+				UpLimit:          512 * 1024,
+				AltDlLimit:       100 * 1024,
+				AltUpLimit:       50 * 1024,
+				SchedulerEnabled: true,
+				ScheduleFromHour: 8,
+				ScheduleToHour:   22,
+				SchedulerDays:    1,
+			}, nil
+		},
+		getAltSpeedLimitsModeFn: func(_ context.Context) (bool, error) {
+			return false, nil
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, nil)
+	body := resultText(t, r)
+
+	var out struct {
+		Mode             string  `json:"mode"`
+		DownloadLimitKBs float64 `json:"download_limit_kbs"`
+		UploadLimitKBs   float64 `json:"upload_limit_kbs"`
+		AltDownloadKBs   float64 `json:"alt_download_limit_kbs"`
+		AltUploadKBs     float64 `json:"alt_upload_limit_kbs"`
+		AltModeActive    bool    `json:"alt_mode_active"`
+		Scheduler        struct {
+			Enabled  bool   `json:"enabled"`
+			FromHour int    `json:"from_hour"`
+			ToHour   int    `json:"to_hour"`
+			Days     string `json:"days"`
+		} `json:"scheduler"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Mode != "read" {
+		t.Errorf("want mode=read, got %q", out.Mode)
+	}
+	if out.DownloadLimitKBs != 2048 {
+		t.Errorf("want download_limit_kbs=2048, got %v", out.DownloadLimitKBs)
+	}
+	if out.UploadLimitKBs != 512 {
+		t.Errorf("want upload_limit_kbs=512, got %v", out.UploadLimitKBs)
+	}
+	if out.AltDownloadKBs != 100 {
+		t.Errorf("want alt_download_limit_kbs=100, got %v", out.AltDownloadKBs)
+	}
+	if out.AltUploadKBs != 50 {
+		t.Errorf("want alt_upload_limit_kbs=50, got %v", out.AltUploadKBs)
+	}
+	if out.AltModeActive {
+		t.Errorf("want alt_mode_active=false")
+	}
+	if !out.Scheduler.Enabled {
+		t.Errorf("want scheduler.enabled=true")
+	}
+	if out.Scheduler.Days != "weekdays" {
+		t.Errorf("want scheduler.days=weekdays, got %q", out.Scheduler.Days)
+	}
+	if out.Scheduler.FromHour != 8 {
+		t.Errorf("want scheduler.from_hour=8, got %d", out.Scheduler.FromHour)
+	}
+	if out.Scheduler.ToHour != 22 {
+		t.Errorf("want scheduler.to_hour=22, got %d", out.Scheduler.ToHour)
+	}
+}
+
+func TestQBitSpeedLimits_SetLimits(t *testing.T) {
+	var gotPrefs map[string]interface{}
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, prefs map[string]interface{}) error {
+			gotPrefs = prefs
+			return nil
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{
+		"set": map[string]any{
+			"download_limit": float64(1024),
+			"upload_limit":   float64(0),
+		},
+	})
+	resultText(t, r)
+
+	if gotPrefs["dl_limit"] != 1024*1024 {
+		t.Errorf("want dl_limit=%d, got %v", 1024*1024, gotPrefs["dl_limit"])
+	}
+	if gotPrefs["up_limit"] != 0 {
+		t.Errorf("want up_limit=0, got %v", gotPrefs["up_limit"])
+	}
+}
+
+func TestQBitSpeedLimits_SetScheduler(t *testing.T) {
+	var gotPrefs map[string]interface{}
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, prefs map[string]interface{}) error {
+			gotPrefs = prefs
+			return nil
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{
+		"set": map[string]any{
+			"schedule_enabled":   true,
+			"schedule_from_hour": float64(22),
+			"schedule_to_hour":   float64(8),
+			"schedule_days":      "weekdays",
+			"alt_download_limit": float64(500),
+			"alt_upload_limit":   float64(100),
+		},
+	})
+	resultText(t, r)
+
+	if gotPrefs["scheduler_enabled"] != true {
+		t.Errorf("want scheduler_enabled=true, got %v", gotPrefs["scheduler_enabled"])
+	}
+	if gotPrefs["scheduler_days"] != 1 {
+		t.Errorf("want scheduler_days=1 (weekdays), got %v", gotPrefs["scheduler_days"])
+	}
+	if gotPrefs["schedule_from_hour"] != 22 {
+		t.Errorf("want schedule_from_hour=22, got %v", gotPrefs["schedule_from_hour"])
+	}
+	if gotPrefs["alt_dl_limit"] != 500*1024 {
+		t.Errorf("want alt_dl_limit=%d, got %v", 500*1024, gotPrefs["alt_dl_limit"])
+	}
+}
+
+func TestQBitSpeedLimits_ToggleAltMode(t *testing.T) {
+	toggled := false
+	mock := &mockQBitClient{
+		getAltSpeedLimitsModeFn: func(_ context.Context) (bool, error) { return false, nil },
+		toggleAltSpeedLimitsFn:  func(_ context.Context) error { toggled = true; return nil },
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"use_alt_limits": true}})
+	resultText(t, r)
+	if !toggled {
+		t.Error("expected toggle to be called")
+	}
+}
+
+func TestQBitSpeedLimits_NoToggleWhenAlreadySet(t *testing.T) {
+	toggled := false
+	mock := &mockQBitClient{
+		getAltSpeedLimitsModeFn: func(_ context.Context) (bool, error) { return true, nil },
+		toggleAltSpeedLimitsFn:  func(_ context.Context) error { toggled = true; return nil },
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"use_alt_limits": true}})
+	resultText(t, r)
+	if toggled {
+		t.Error("expected no toggle when alt mode already active")
+	}
+}
+
+func TestQBitSpeedLimits_InvalidScheduleDays(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_days": "bimonthly"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "all|weekdays|weekends") {
+		t.Errorf("want error listing valid days, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_ScheduleDaysMonday(t *testing.T) {
+	var gotPrefs map[string]interface{}
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, prefs map[string]interface{}) error {
+			gotPrefs = prefs
+			return nil
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_days": "monday"}})
+	resultText(t, r)
+	if gotPrefs["scheduler_days"] != 3 {
+		t.Errorf("want scheduler_days=3 (monday), got %v", gotPrefs["scheduler_days"])
+	}
+}
+
+func TestQBitSpeedLimits_NegativeLimit(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"download_limit": float64(-1)}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "download_limit") {
+		t.Errorf("want error naming download_limit, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_ScheduleEnabledWrongType(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_enabled": "yes"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "schedule_enabled") {
+		t.Errorf("want error naming schedule_enabled, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_InvalidHourAbove23(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_from_hour": float64(25)}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "0-23") {
+		t.Errorf("want error about hour range, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_InvalidHourBelowZero(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_to_hour": float64(-1)}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "0-23") {
+		t.Errorf("want error about hour range, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_ScheduleDaysWeekends(t *testing.T) {
+	var gotPrefs map[string]interface{}
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, prefs map[string]interface{}) error {
+			gotPrefs = prefs
+			return nil
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"schedule_days": "weekends"}})
+	resultText(t, r)
+	if gotPrefs["scheduler_days"] != 2 {
+		t.Errorf("want scheduler_days=2 (weekends), got %v", gotPrefs["scheduler_days"])
+	}
+}
+
+func TestQBitSpeedLimits_SetNotObject(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": "not-an-object"})
+	resultError(t, r)
+}
+
+func TestQBitSpeedLimits_DownloadLimitWrongType(t *testing.T) {
+	mock := &mockQBitClient{}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"download_limit": "fast"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "download_limit") {
+		t.Errorf("want error naming download_limit, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_UseAltLimitsWrongType(t *testing.T) {
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, _ map[string]interface{}) error { return nil },
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"use_alt_limits": "yes"}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "use_alt_limits") {
+		t.Errorf("want error naming use_alt_limits, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_ReadSDKError(t *testing.T) {
+	mock := &mockQBitClient{
+		getAppPreferencesFn: func(_ context.Context) (qbit.AppPreferences, error) {
+			return qbit.AppPreferences{}, fmt.Errorf("connection refused")
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, nil)
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "connection refused") {
+		t.Errorf("want error to propagate SDK message, got %q", msg)
+	}
+}
+
+func TestQBitSpeedLimits_WriteSDKError(t *testing.T) {
+	mock := &mockQBitClient{
+		setPreferencesFn: func(_ context.Context, _ map[string]interface{}) error {
+			return fmt.Errorf("write failed")
+		},
+	}
+	_, handler := tools.QBitSpeedLimits(mock)
+	r := callTool(t, handler, map[string]any{"set": map[string]any{"upload_limit": float64(512)}})
+	msg := resultError(t, r)
+	if !strings.Contains(msg, "write failed") {
+		t.Errorf("want error to propagate SDK message, got %q", msg)
 	}
 }

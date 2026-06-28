@@ -23,6 +23,8 @@ type QBitClient interface {
 	GetTransferInfoCtx(ctx context.Context) (*qbit.TransferInfo, error)
 	GetAppPreferencesCtx(ctx context.Context) (qbit.AppPreferences, error)
 	SetPreferencesCtx(ctx context.Context, prefs map[string]interface{}) error
+	GetAlternativeSpeedLimitsModeCtx(ctx context.Context) (bool, error)
+	ToggleAlternativeSpeedLimitsCtx(ctx context.Context) error
 }
 
 func NewQBitClient(host, username, password string) QBitClient {
@@ -590,4 +592,217 @@ func QBitPreferences(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToo
 	}
 
 	return tool, handler
+}
+
+type speedLimitsResult struct {
+	Mode             string        `json:"mode"`
+	DownloadLimitKBs float64       `json:"download_limit_kbs"`
+	UploadLimitKBs   float64       `json:"upload_limit_kbs"`
+	AltDownloadKBs   float64       `json:"alt_download_limit_kbs"`
+	AltUploadKBs     float64       `json:"alt_upload_limit_kbs"`
+	AltModeActive    bool          `json:"alt_mode_active"`
+	Scheduler        schedulerInfo `json:"scheduler"`
+}
+
+type schedulerInfo struct {
+	Enabled  bool   `json:"enabled"`
+	FromHour int    `json:"from_hour"`
+	ToHour   int    `json:"to_hour"`
+	Days     string `json:"days"`
+}
+
+var schedulerDaysMap = map[string]int{
+	"all":       0,
+	"weekdays":  1,
+	"weekends":  2,
+	"monday":    3,
+	"tuesday":   4,
+	"wednesday": 5,
+	"thursday":  6,
+	"friday":    7,
+	"saturday":  8,
+	"sunday":    9,
+}
+
+var schedulerDaysNames = map[int]string{
+	0: "all",
+	1: "weekdays",
+	2: "weekends",
+	3: "monday",
+	4: "tuesday",
+	5: "wednesday",
+	6: "thursday",
+	7: "friday",
+	8: "saturday",
+	9: "sunday",
+}
+
+func QBitSpeedLimits(qc QBitClient) (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("qbit_speed_limits",
+		mcp.WithDescription("Get or set global speed limits and the alternative-rate scheduler. "+
+			"Limits are in KiB/s; 0 = unlimited. "+
+			"Omit 'set' to read current state. "+
+			"'use_alt_limits' switches to the alternative limits immediately. "+
+			"Scheduler switches automatically between normal and alt limits on a time window. "+
+			"Normal limits = unrestricted (night); alt limits = capped (day)."),
+		mcp.WithObject("set", mcp.Description(
+			"Fields to update — include only what you want to change. "+
+				"download_limit (KiB/s, 0=unlimited), "+
+				"upload_limit (KiB/s, 0=unlimited), "+
+				"alt_download_limit (KiB/s, 0=unlimited), "+
+				"alt_upload_limit (KiB/s, 0=unlimited), "+
+				"use_alt_limits (bool), "+
+				"schedule_enabled (bool), "+
+				"schedule_from_hour (0-23), "+
+				"schedule_to_hour (0-23), "+
+				"schedule_days (all|weekdays|weekends|monday|tuesday|wednesday|thursday|friday|saturday|sunday).",
+		)),
+	)
+
+	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		rawSet := mcp.ParseArgument(req, "set", nil)
+
+		if rawSet == nil {
+			prefs, err := qc.GetAppPreferencesCtx(ctx)
+			if err != nil {
+				return mcp.NewToolResultError("get preferences error: " + err.Error()), nil //nolint:nilerr
+			}
+			altActive, err := qc.GetAlternativeSpeedLimitsModeCtx(ctx)
+			if err != nil {
+				return mcp.NewToolResultError("get alt mode error: " + err.Error()), nil //nolint:nilerr
+			}
+			daysName := schedulerDaysNames[prefs.SchedulerDays]
+			if daysName == "" {
+				daysName = "all"
+			}
+			b, err := json.Marshal(speedLimitsResult{
+				Mode:             "read",
+				DownloadLimitKBs: bytesToKBs(int64(prefs.DlLimit)),
+				UploadLimitKBs:   bytesToKBs(int64(prefs.UpLimit)),
+				AltDownloadKBs:   bytesToKBs(int64(prefs.AltDlLimit)),
+				AltUploadKBs:     bytesToKBs(int64(prefs.AltUpLimit)),
+				AltModeActive:    altActive,
+				Scheduler: schedulerInfo{
+					Enabled:  prefs.SchedulerEnabled,
+					FromHour: prefs.ScheduleFromHour,
+					ToHour:   prefs.ScheduleToHour,
+					Days:     daysName,
+				},
+			})
+			if err != nil {
+				return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+			}
+			return mcp.NewToolResultText(string(b)), nil
+		}
+
+		setMap, ok := rawSet.(map[string]interface{})
+		if !ok {
+			return mcp.NewToolResultError("set must be an object"), nil //nolint:nilerr
+		}
+
+		prefsUpdate := make(map[string]interface{})
+
+		if v, ok := setMap["download_limit"]; ok {
+			kbs, ok := toFloat64(v)
+			if !ok || kbs < 0 {
+				return mcp.NewToolResultError("download_limit must be a number >= 0"), nil //nolint:nilerr
+			}
+			prefsUpdate["dl_limit"] = int(kbs * 1024)
+		}
+		if v, ok := setMap["upload_limit"]; ok {
+			kbs, ok := toFloat64(v)
+			if !ok || kbs < 0 {
+				return mcp.NewToolResultError("upload_limit must be a number >= 0"), nil //nolint:nilerr
+			}
+			prefsUpdate["up_limit"] = int(kbs * 1024)
+		}
+		if v, ok := setMap["alt_download_limit"]; ok {
+			kbs, ok := toFloat64(v)
+			if !ok || kbs < 0 {
+				return mcp.NewToolResultError("alt_download_limit must be a number >= 0"), nil //nolint:nilerr
+			}
+			prefsUpdate["alt_dl_limit"] = int(kbs * 1024)
+		}
+		if v, ok := setMap["alt_upload_limit"]; ok {
+			kbs, ok := toFloat64(v)
+			if !ok || kbs < 0 {
+				return mcp.NewToolResultError("alt_upload_limit must be a number >= 0"), nil //nolint:nilerr
+			}
+			prefsUpdate["alt_up_limit"] = int(kbs * 1024)
+		}
+		if v, ok := setMap["schedule_enabled"]; ok {
+			b, ok := v.(bool)
+			if !ok {
+				return mcp.NewToolResultError("schedule_enabled must be a bool"), nil //nolint:nilerr
+			}
+			prefsUpdate["scheduler_enabled"] = b
+		}
+		if v, ok := setMap["schedule_from_hour"]; ok {
+			h, ok := toFloat64(v)
+			if !ok || h < 0 || h > 23 {
+				return mcp.NewToolResultError("schedule_from_hour must be 0-23"), nil //nolint:nilerr
+			}
+			prefsUpdate["schedule_from_hour"] = int(h)
+		}
+		if v, ok := setMap["schedule_to_hour"]; ok {
+			h, ok := toFloat64(v)
+			if !ok || h < 0 || h > 23 {
+				return mcp.NewToolResultError("schedule_to_hour must be 0-23"), nil //nolint:nilerr
+			}
+			prefsUpdate["schedule_to_hour"] = int(h)
+		}
+		if v, ok := setMap["schedule_days"]; ok {
+			days, ok := v.(string)
+			if !ok {
+				return mcp.NewToolResultError("schedule_days must be a string"), nil //nolint:nilerr
+			}
+			daysInt, ok := schedulerDaysMap[days]
+			if !ok {
+				return mcp.NewToolResultError("schedule_days must be all|weekdays|weekends|monday|tuesday|wednesday|thursday|friday|saturday|sunday"), nil //nolint:nilerr
+			}
+			prefsUpdate["scheduler_days"] = daysInt
+		}
+
+		if len(prefsUpdate) > 0 {
+			if err := qc.SetPreferencesCtx(ctx, prefsUpdate); err != nil {
+				return mcp.NewToolResultError("set preferences error: " + err.Error()), nil //nolint:nilerr
+			}
+		}
+
+		if v, ok := setMap["use_alt_limits"]; ok {
+			desired, ok := v.(bool)
+			if !ok {
+				return mcp.NewToolResultError("use_alt_limits must be a bool"), nil //nolint:nilerr
+			}
+			current, err := qc.GetAlternativeSpeedLimitsModeCtx(ctx)
+			if err != nil {
+				return mcp.NewToolResultError("get alt mode error: " + err.Error()), nil //nolint:nilerr
+			}
+			if current != desired {
+				if err := qc.ToggleAlternativeSpeedLimitsCtx(ctx); err != nil {
+					return mcp.NewToolResultError("toggle alt mode error: " + err.Error()), nil //nolint:nilerr
+				}
+			}
+		}
+
+		b, err := json.Marshal(map[string]interface{}{"mode": "write", "applied": setMap})
+		if err != nil {
+			return mcp.NewToolResultError("marshal error"), nil //nolint:nilerr
+		}
+		return mcp.NewToolResultText(string(b)), nil
+	}
+
+	return tool, handler
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
 }
