@@ -3,10 +3,10 @@ module github.com/Stoganet/mcp
 go 1.26.3
 
 require (
-	github.com/autobrr/go-qbittorrent v1.16.0
-	github.com/mark3labs/mcp-go v0.56.0
+	github.com/autobrr/go-qbittorrent v1.17.0
+	github.com/mark3labs/mcp-go v0.57.0
 	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.0
+	github.com/moby/moby/client v0.5.1
 	golift.io/starr v1.3.1
 )
 
@@ -37,8 +37,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
-	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 )
