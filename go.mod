@@ -5,9 +5,9 @@ go 1.26.3
 require (
 	github.com/autobrr/go-qbittorrent v1.18.0
 	github.com/mark3labs/mcp-go v0.58.0
-	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.1
-	golift.io/starr v1.3.1
+	github.com/moby/moby/api v1.56.0
+	github.com/moby/moby/client v0.6.0
+	golift.io/starr v1.4.0
 )
 
 require (
@@ -37,8 +37,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
