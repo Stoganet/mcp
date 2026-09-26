@@ -3,7 +3,7 @@ module github.com/Stoganet/mcp
 go 1.26.3
 
 require (
-	github.com/autobrr/go-qbittorrent v1.18.0
+	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0
