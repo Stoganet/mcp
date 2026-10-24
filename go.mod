@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/autobrr/go-qbittorrent v1.19.0
-	github.com/mark3labs/mcp-go v1.2.1
+	github.com/mark3labs/mcp-go v1.3.0
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
 	golift.io/starr v1.4.1
